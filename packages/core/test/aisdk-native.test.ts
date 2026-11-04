@@ -22,6 +22,20 @@ function map(
 }
 
 describe("AISDKNative", () => {
+  test("preserves disabled authentication for a System One proxy", () => {
+    const target = {
+      package: "@opencode/ai/providers/typesafe-ai/decisions",
+      settings: { apiKey: false },
+      variants: [{ id: "proxy", settings: { apiKey: false } }],
+    }
+    AISDKNative.rewrite(target, { specifier: target.package, providerID: "maple" })
+    expect(Provider.mergeOverlay({ baseURL: "http://localhost/v1" }, target.settings)).toEqual({
+      baseURL: "http://localhost/v1",
+      apiKey: false,
+    })
+    expect(target.variants[0].settings.apiKey).toBe(false)
+  })
+
   test("keeps Cloudflare AI Gateway models on its native gateway package", () => {
     for (const packageName of [
       "ai-gateway-provider",
