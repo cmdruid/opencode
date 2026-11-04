@@ -221,13 +221,34 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               instance={props.request.id}
               header={header()}
               body={(option) => (
-                <Show when={option === "always"} fallback={presentationBody()}>
-                  <box paddingLeft={1} gap={1}>
-                    <For each={permissionAlwaysLines(props.request)}>
-                      {(line, index) => <text fg={index() === 0 ? theme.text.muted : theme.text.base}>{line}</text>}
-                    </For>
-                  </box>
-                </Show>
+                <box gap={1} minHeight={0}>
+                  <Show when={props.request.message}>
+                    {(message) => (
+                      <scrollbox
+                        id={`session.permission.${props.request.id}.message`}
+                        paddingLeft={1}
+                        minHeight={1}
+                        maxHeight={6}
+                        flexShrink={1}
+                        verticalScrollbarOptions={{
+                          trackOptions: {
+                            backgroundColor: theme.background.raised.base,
+                            foregroundColor: theme.scrollbar.base,
+                          },
+                        }}
+                      >
+                        <text fg={theme.text.feedback.info.base}>{message()}</text>
+                      </scrollbox>
+                    )}
+                  </Show>
+                  <Show when={option === "always"} fallback={presentationBody()}>
+                    <box paddingLeft={1} gap={1}>
+                      <For each={permissionAlwaysLines(props.request)}>
+                        {(line, index) => <text fg={index() === 0 ? theme.text.muted : theme.text.base}>{line}</text>}
+                      </For>
+                    </box>
+                  </Show>
+                </box>
               )}
               options={
                 props.request.save?.length
