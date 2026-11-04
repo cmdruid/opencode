@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import type { PermissionRequest } from "@opencode/client"
-import type { TextareaRenderable } from "@opentui/core"
+import { ScrollBoxRenderable, type TextareaRenderable } from "@opentui/core"
 import { testRender, type JSX } from "@opentui/solid"
 import { expect, test } from "bun:test"
 import { createSignal, onMount } from "solid-js"
@@ -248,6 +248,40 @@ test("permission layers leave the focused peer's Enter and navigation alone unti
     await panes.app.waitFor(() => panes.replies.length === 1)
     expect(panes.replies).toEqual([{ decision: "once" }])
     expect(panes.submissions).toHaveLength(1)
+  } finally {
+    panes.app.renderer.destroy()
+  }
+})
+
+test("permission review explanations remain visible while choosing a reply", async () => {
+  await using tmp = await tmpdir()
+  const panes = await mountPanes(tmp.path, () => (
+    <PermissionPrompt
+      request={{
+        ...request,
+        save: ["*"],
+        message:
+          "Shadow review suggests escalate: Classifier did not return a sufficiently confident decision; please review the request. Your decision is required.",
+      }}
+    />
+  ))
+  try {
+    panes.setActive(true)
+    await panes.app.waitForFrame((frame) => frame.includes("Shadow review suggests escalate:"))
+    expect(panes.app.captureCharFrame()).toContain("Your decision is required.")
+    expect(panes.replies).toEqual([])
+    panes.app.mockInput.pressArrow("right")
+    await panes.app.waitForFrame((frame) => frame.includes("This will always allow"))
+    expect(panes.app.captureCharFrame()).toContain("Shadow review suggests escalate:")
+    expect(panes.replies).toEqual([])
+    panes.app.resize(55, 24)
+    await panes.app.renderOnce()
+    const explanation = panes.app.renderer.root.findDescendantById(`session.permission.${request.id}.message`)
+    if (!(explanation instanceof ScrollBoxRenderable)) throw new Error("Missing review explanation")
+    await panes.app.mockMouse.scroll(explanation.x + 1, explanation.viewport.y + 1, "down")
+    await panes.app.waitForFrame((frame) => frame.includes("required."))
+    expect(panes.app.captureCharFrame()).toContain("Allow once")
+    expect(panes.app.captureCharFrame()).toContain("Reject")
   } finally {
     panes.app.renderer.destroy()
   }
