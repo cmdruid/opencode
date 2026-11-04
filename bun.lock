@@ -575,6 +575,30 @@
         "@opencode/plugin": "^2.0.27 || ^0.0.0-dev",
       },
     },
+    "packages/plugins/permission-review": {
+      "name": "@opencode/plugin-permission-review",
+      "version": "2.2.5",
+      "devDependencies": {
+        "@opencode/core": "workspace:*",
+        "@opencode/tui": "workspace:*",
+        "@opentui/core": "catalog:",
+        "@opentui/solid": "catalog:",
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@typescript/native": "catalog:",
+        "solid-js": "catalog:",
+      },
+      "peerDependencies": {
+        "@opencode/plugin": "^2.2.5",
+        "@opentui/solid": ">=0.8.1",
+        "effect": "^4.1.0",
+        "solid-js": ">=1.9.0",
+      },
+      "optionalPeers": [
+        "@opentui/solid",
+        "solid-js",
+      ],
+    },
     "packages/plugins/sudo": {
       "name": "@cmdcode/opencode-safe-sudo",
       "version": "0.1.0",
@@ -2016,6 +2040,8 @@
     "@opencode/plugin-browser": ["@opencode/plugin-browser@workspace:packages/plugin-browser"],
 
     "@opencode/plugin-figma": ["@opencode/plugin-figma@workspace:packages/plugins/figma"],
+
+    "@opencode/plugin-permission-review": ["@opencode/plugin-permission-review@workspace:packages/plugins/permission-review"],
 
     "@opencode/protocol": ["@opencode/protocol@workspace:packages/protocol"],
 

@@ -1,0 +1,48 @@
+{
+  "name": "@opencode/plugin-permission-review",
+  "version": "2.2.5",
+  "description": "Experimental automatic permission review for OpenCode",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.ts",
+    "./server": "./index.ts",
+    "./tui": "./tui.tsx"
+  },
+  "files": [
+    "index.ts",
+    "review.ts",
+    "contract.ts",
+    "tui.tsx",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test --timeout 30000 --preload @opentui/solid/preload --only-failures",
+    "typecheck": "bun check --no-script",
+    "typecheck:tsc": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.2.5",
+    "effect": "^4.1.0",
+    "solid-js": ">=1.9.0",
+    "@opentui/solid": ">=0.8.1"
+  },
+  "peerDependenciesMeta": {
+    "solid-js": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opencode/core": "workspace:*",
+    "@opencode/tui": "workspace:*",
+    "@opentui/core": "catalog:",
+    "@opentui/solid": "catalog:",
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@typescript/native": "catalog:",
+    "solid-js": "catalog:"
+  }
+}
