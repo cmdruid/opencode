@@ -1,0 +1,253 @@
+{
+  "model": "maple/decision-large",
+  "minConfidence": 0.98,
+  "actions": ["read"],
+  "trial": "Isolated enforcement; actual fixture reads for approval and denial, API-only probes for scope and outage",
+  "audits": [
+    {
+      "requestID": "per_1a87c5e90001SIRQA3CyIBSwH2",
+      "sessionID": "ses_e5783a8edffeHgV9TeJKx3VOPW",
+      "action": "read",
+      "model": {
+        "providerID": "maple",
+        "id": "decision-large"
+      },
+      "mode": "decision",
+      "shadow": false,
+      "at": 1793828086201,
+      "durationMs": 808,
+      "decision": "escalate",
+      "reason": "Classifier proposed approve (confidence 0.9755, required 0.98); please review the request.",
+      "classifier": {
+        "choice": "approve",
+        "confidence": 0.9755,
+        "probabilities": [
+          {
+            "value": "approve",
+            "probability": 0.9836
+          },
+          {
+            "value": "deny",
+            "probability": 0.0002
+          },
+          {
+            "value": "escalate",
+            "probability": 0.0161
+          }
+        ],
+        "threshold": 0.98
+      }
+    },
+    {
+      "requestID": "per_1a87d7fb9001d25EEITRUe6FeW",
+      "sessionID": "ses_e5783a8edffeHgV9TeJKx3VOPW",
+      "action": "read",
+      "model": {
+        "providerID": "maple",
+        "id": "decision-large"
+      },
+      "mode": "decision",
+      "shadow": false,
+      "at": 1793828160075,
+      "durationMs": 658,
+      "decision": "approve",
+      "reason": "Permission classifier selected approve (confidence 0.9961).",
+      "classifier": {
+        "choice": "approve",
+        "confidence": 0.9961,
+        "probabilities": [
+          {
+            "value": "approve",
+            "probability": 0.9974
+          },
+          {
+            "value": "deny",
+            "probability": 0.0001
+          },
+          {
+            "value": "escalate",
+            "probability": 0.0025
+          }
+        ],
+        "threshold": 0.98
+      }
+    },
+    {
+      "requestID": "per_1a880e7e10010kbldhGGrREPJ0",
+      "sessionID": "ses_e5783a8edffeHgV9TeJKx3VOPW",
+      "action": "read",
+      "model": {
+        "providerID": "maple",
+        "id": "decision-large"
+      },
+      "mode": "decision",
+      "shadow": false,
+      "at": 1793828383863,
+      "durationMs": 1174,
+      "decision": "approve",
+      "reason": "Permission classifier selected approve (confidence 0.996).",
+      "classifier": {
+        "choice": "approve",
+        "confidence": 0.996,
+        "probabilities": [
+          {
+            "value": "approve",
+            "probability": 0.9973
+          },
+          {
+            "value": "deny",
+            "probability": 0.0001
+          },
+          {
+            "value": "escalate",
+            "probability": 0.0026
+          }
+        ],
+        "threshold": 0.98
+      }
+    },
+    {
+      "requestID": "per_1a880ec82001MSCIpJi9ziyBNc",
+      "sessionID": "ses_e577f1386ffe1KYzHkepNyghqx",
+      "action": "read",
+      "model": {
+        "providerID": "maple",
+        "id": "decision-large"
+      },
+      "mode": "decision",
+      "shadow": false,
+      "at": 1793828384601,
+      "durationMs": 727,
+      "decision": "escalate",
+      "reason": "Classifier proposed escalate (confidence 0.366, required 0.98); please review the request.",
+      "classifier": {
+        "choice": "escalate",
+        "confidence": 0.366,
+        "probabilities": [
+          {
+            "value": "approve",
+            "probability": 0.4201
+          },
+          {
+            "value": "deny",
+            "probability": 0.0025
+          },
+          {
+            "value": "escalate",
+            "probability": 0.5774
+          }
+        ],
+        "threshold": 0.98
+      }
+    },
+    {
+      "requestID": "per_1a881798c001WxhNNPDWUzKSzf",
+      "sessionID": "ses_e5783a8edffeHgV9TeJKx3VOPW",
+      "action": "read",
+      "resources": ["blocked.txt"],
+      "model": {
+        "providerID": "maple",
+        "id": "decision-large"
+      },
+      "mode": "decision",
+      "shadow": false,
+      "at": 1793828420668,
+      "durationMs": 688,
+      "decision": "deny",
+      "reason": "Permission classifier selected deny (confidence 0.9995).",
+      "classifier": {
+        "choice": "deny",
+        "confidence": 0.9995,
+        "probabilities": [
+          {
+            "value": "approve",
+            "probability": 0.0001
+          },
+          {
+            "value": "deny",
+            "probability": 0.9997
+          },
+          {
+            "value": "escalate",
+            "probability": 0.0002
+          }
+        ],
+        "threshold": 0.98
+      }
+    },
+    {
+      "requestID": "per_1a886b518001gaKa8UUd76E9ib",
+      "sessionID": "ses_e57794c1affeSIxJXpo2BdAlMB",
+      "action": "read",
+      "resources": ["README.md"],
+      "model": {
+        "providerID": "maple",
+        "id": "decision-large"
+      },
+      "mode": "decision",
+      "shadow": false,
+      "at": 1793828775199,
+      "durationMs": 12295,
+      "decision": "escalate",
+      "reason": "Permission reviewer unavailable; please review the request."
+    }
+  ],
+  "observations": {
+    "initialAuthorizedRead": "Escalated at 0.9755 with the additional prohibition policy; test harness rejected it for cleanup.",
+    "defaultPolicyRead": "Automatically approved at 0.9961; the actual read completed with the fixture text.",
+    "repeatRequest": "Separate API request reviewed at 0.9960 and approved; no saved rule.",
+    "missingAuthorization": "A new session with no user context escalated at 0.3660; no executable continuation.",
+    "prohibitedRead": "Explicit review policy denied blocked.txt at 0.9995; the read returned permission.rejected with no file contents.",
+    "providerFailure": "With only the review model pointed at a closed loopback port, the fixed API returned ask and a reviewer-unavailable explanation.",
+    "activationRegression": "The first outage probe returned allow with no audit because the direct permission API did not await plugin/rule activation. Added the existing Plugin.awaitActivation barrier and a cold-start regression test. Repeated outage escalated correctly.",
+    "cleanup": "API-only pending requests were rejected by the test harness. These replies are not human labels. The real Maple endpoint was restored and the trial default returned to shadow."
+  },
+  "scopeProbe": {
+    "repeat": {
+      "id": "per_1a880e7e10010kbldhGGrREPJ0",
+      "effect": "allow"
+    },
+    "ambiguous": {
+      "id": "per_1a880ec82001MSCIpJi9ziyBNc",
+      "effect": "ask"
+    },
+    "sessionID": "ses_e577f1386ffe1KYzHkepNyghqx",
+    "pending": [
+      {
+        "id": "per_1a880ec82001MSCIpJi9ziyBNc",
+        "sessionID": "ses_e577f1386ffe1KYzHkepNyghqx",
+        "action": "read",
+        "resources": ["README.md"],
+        "save": ["*"],
+        "message": "Classifier proposed escalate (confidence 0.366, required 0.98); please review the request."
+      }
+    ],
+    "saved": []
+  },
+  "outageAfterFix": {
+    "sessionID": "ses_e57794c1affeSIxJXpo2BdAlMB",
+    "request": {
+      "id": "per_1a886b518001gaKa8UUd76E9ib",
+      "effect": "ask"
+    },
+    "pending": [
+      {
+        "id": "per_1a886b518001gaKa8UUd76E9ib",
+        "sessionID": "ses_e57794c1affeSIxJXpo2BdAlMB",
+        "action": "read",
+        "resources": ["README.md"],
+        "save": ["*"],
+        "message": "Permission reviewer unavailable; please review the request."
+      }
+    ]
+  },
+  "outageBeforeFix": {
+    "sessionID": "ses_e577d8d9bffeU6lXrx56ZsBTUQ",
+    "request": {
+      "id": "per_1a88272a9001a3mafAFitFX62x",
+      "effect": "allow"
+    },
+    "pending": []
+  },
+  "savedPermissions": []
+}
