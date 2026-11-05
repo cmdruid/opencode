@@ -1,7 +1,9 @@
 import { Plugin } from "@opencode/plugin/effect"
 import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
 import { Clock, Effect, Option, Schema } from "effect"
-import { Assessment, Contract, ReviewMode } from "./contract.js"
+import path from "node:path"
+import type { AssertInput } from "@opencode/plugin/permission"
+import { Assessment, Contract, ReviewMode, Selection } from "./contract.js"
 import { Options, review } from "./review.js"
 
 export default Plugin.define({
@@ -13,18 +15,48 @@ export default Plugin.define({
       if (value === undefined) return options.defaultMode ?? (options.shadow ? "shadow" : "auto")
       return Option.getOrElse(Schema.decodeUnknownOption(ReviewMode)(value), () => "manual" as const)
     })
-    const state = Effect.fn(function* (sessionID: string) {
-      return { mode: yield* mode(sessionID), model: options.model, actions: options.actions }
+    const selection = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
+      let session = yield* ctx.session.get({ sessionID }).pipe(Effect.orDie)
+      while (true) {
+        const value = yield* ctx.storage.get(`selection/${session.id}`)
+        if (value !== undefined)
+          return {
+            ...Option.getOrElse(Schema.decodeUnknownOption(Selection)(value), () => ({
+              preset: "read-only" as const,
+              mode: "manual" as const,
+            })),
+            inheritedFrom: session.id === sessionID ? undefined : session.id,
+          }
+        if (!session.parentID) break
+        session = yield* ctx.session.get({ sessionID: session.parentID }).pipe(Effect.orDie)
+      }
+      return { preset: "configured" as const, mode: yield* mode(sessionID), inheritedFrom: undefined }
+    })
+    const state = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
+      return { ...(yield* selection(sessionID)), model: options.model, actions: options.actions }
     })
     const rpc: RpcRegistration<typeof Contract> = yield* ctx.rpc
       .register(Contract, {
         get: Effect.fn(function* (input) {
-          yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
           return yield* state(input.sessionID)
         }),
         set: Effect.fn(function* (input) {
           yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
           yield* ctx.storage.set(`mode/${input.sessionID}`, input.mode)
+          yield* ctx.storage.set(`selection/${input.sessionID}`, { preset: "configured", mode: input.mode })
+          const next = yield* state(input.sessionID)
+          yield* rpc.events.emit("changed", { sessionID: input.sessionID, state: next }).pipe(Effect.orDie)
+          return next
+        }),
+        select: Effect.fn(function* (input) {
+          yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
+          const mode =
+            input.preset === "configured"
+              ? (options.defaultMode ?? (options.shadow ? "shadow" : "auto"))
+              : input.preset === "auto" || input.preset === "shadow"
+                ? input.preset
+                : "manual"
+          yield* ctx.storage.set(`selection/${input.sessionID}`, { preset: input.preset, mode })
           const next = yield* state(input.sessionID)
           yield* rpc.events.emit("changed", { sessionID: input.sessionID, state: next }).pipe(Effect.orDie)
           return next
@@ -47,10 +79,32 @@ export default Plugin.define({
         }),
       })
       .pipe(Effect.orDie)
+    yield* ctx.permission.hook("evaluate", (event) =>
+      Effect.gen(function* () {
+        if (event.effect === "deny") return
+        const selected = yield* selection(event.sessionID)
+        if (selected.preset === "configured") return
+        if (selected.preset === "full") {
+          event.effect = "allow"
+          return
+        }
+        // Glob and grep authorize their search directory through external_directory first.
+        if (["glob", "grep", "question"].includes(event.action)) return
+        if (event.action === "read" || (event.action === "edit" && selected.preset !== "read-only")) {
+          const internal = event.resources.every((resource) => {
+            const relative = path.relative(ctx.location.directory, path.resolve(ctx.location.directory, resource))
+            return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+          })
+          if (internal) return
+        }
+        // Restrict saved grants as well as configured allows. Never grant a configured denial.
+        event.effect = "ask"
+      }),
+    )
     yield* ctx.permission.hook("experimental.review", (event) =>
       Effect.gen(function* () {
         if (event.result || (options.actions && !options.actions.includes(event.request.action))) return
-        const selected = yield* mode(event.request.sessionID)
+        const selected = (yield* selection(event.request.sessionID)).mode
         if (selected === "manual") return
         const started = yield* Clock.currentTimeMillis
         const result = yield* review(ctx, event, options).pipe(

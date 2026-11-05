@@ -1,8 +1,16 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, onCleanup, Show } from "solid-js"
-import { Contract, type Assessment, type ReviewMode, type State } from "./contract.js"
+import { Contract, type Assessment, type Preset, type ReviewMode, type State } from "./contract.js"
 
 const labels = { manual: "Manual", shadow: "Shadow", auto: "Approve for me" } satisfies Record<ReviewMode, string>
+const presets = {
+  "read-only": { title: "Read only", description: "Read files; ask before edits and commands" },
+  workspace: { title: "Ask for approval", description: "Edit locally; ask for commands and network" },
+  auto: { title: "Approve for me", description: "Edit locally; model reviews other requests" },
+  shadow: { title: "Shadow", description: "Edit locally; model suggests, you decide" },
+  full: { title: "Full access", description: "Allow requests except explicit denials" },
+  configured: { title: "Configured rules", description: "Reset to configured rules and reviewer" },
+} satisfies Record<Preset, { title: string; description: string }>
 
 export default Plugin.define({
   id: "opencode.permission-review",
@@ -19,10 +27,83 @@ export default Plugin.define({
         message: error instanceof Error ? error.message : String(error),
         variant: "error",
       })
+    const requirePrompts = async () => {
+      const mode = context.ui.experimental?.permissions.mode()
+      if (mode === "prompt") return true
+      await context.ui.dialog.alert({
+        title: mode ? "Turn off auto accept" : "Update the OpenCode client",
+        message: mode
+          ? "Open /settings → Session → Permissions and select Prompt. If started with --auto, restart without it. Auto accept answers permission prompts automatically, including reviewer escalations. Keep other connected clients in Prompt mode too."
+          : "This selector needs a client with the experimental permission-mode API. Rebuild the fork and reconnect before choosing a preset.",
+      })
+      return false
+    }
 
     context.keymap.layer(() => ({
       mode: "global",
       commands: [
+        {
+          id: "permission-review.permissions",
+          title: "Permissions",
+          description: "Choose permissions and approval handling for this session",
+          group: "Session",
+          palette: true,
+          slash: { name: "permissions" },
+          enabled: () => current() !== undefined,
+          async run() {
+            const session = current()
+            if (!session) return
+            await (async () => {
+              const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
+              const preset = await context.ui.dialog.select<Preset>({
+                title: "Permissions — this session",
+                current: state.preset,
+                options: (Object.keys(presets) as Preset[]).map((value) => ({ value, ...presets[value] })),
+                actions: [
+                  {
+                    bind: "ctrl+i",
+                    title: "Details",
+                    onTrigger: () =>
+                      context.ui.dialog.alert({
+                        title: "Active permissions",
+                        message: [
+                          `Preset: ${presets[state.preset].title}`,
+                          `Reviewer: ${labels[state.mode]} (${state.model.providerID}/${state.model.id})`,
+                          `Reviewed actions: ${state.actions?.join(", ") ?? "all requests needing approval"}`,
+                          ...(state.inheritedFrom ? [`Inherited from: ${state.inheritedFrom}`] : []),
+                          "",
+                          "Explicit deny rules always apply. Local reads and edits keep configured approval requirements. Shell, network, outside-directory and other tool requests need approval in workspace presets.",
+                          "",
+                          "Selections persist for this session and are inherited by subagents unless overridden there. Existing prompts and running reviews keep their current decision flow.",
+                          "",
+                          "These are tool approval rules, not an OS sandbox. Commands run with your account's filesystem and network access.",
+                        ].join("\n"),
+                      }),
+                  },
+                ],
+              })
+              if (!preset) return
+              if (preset !== "full" && !(await requirePrompts())) return
+              if (preset === "full") {
+                const confirmed = await context.ui.dialog.select({
+                  title: "Enable full access?",
+                  current: false,
+                  options: [
+                    { value: false, title: "Go back", description: "Keep current permissions" },
+                    {
+                      value: true,
+                      title: "Enable full access",
+                      description: "Commands, outside files and network; deny rules remain",
+                    },
+                  ],
+                })
+                if (!confirmed) return
+              }
+              await rpc.select({ sessionID: session.sessionID, preset }, { location: session.location })
+              context.ui.toast.show({ message: `Permissions: ${presets[preset].title}`, variant: "info" })
+            })().catch(failure)
+          },
+        },
         {
           id: "permission-review.mode",
           title: "Permission review mode",
@@ -36,6 +117,10 @@ export default Plugin.define({
             if (!session) return
             await (async () => {
               const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
+              if (state.preset !== "configured") {
+                context.keymap.dispatch("permission-review.permissions")
+                return
+              }
               const mode = await context.ui.dialog.select<ReviewMode>({
                 title: "Permission review — this session",
                 current: state.mode,
@@ -50,6 +135,7 @@ export default Plugin.define({
                 ],
               })
               if (!mode || mode === state.mode) return
+              if (!(await requirePrompts())) return
               await rpc.set({ sessionID: session.sessionID, mode }, { location: session.location })
               context.ui.toast.show({ message: `Permission review: ${labels[mode]}`, variant: "info" })
             })().catch(failure)
@@ -109,11 +195,20 @@ export default Plugin.define({
         onCleanup(
           rpc.events.on("changed", (event) => {
             if (event.data.sessionID === current()?.sessionID) setState(event.data.state)
+            else void load().catch(() => undefined)
           }),
         )
         return (
           <Show when={state()}>
-            <text fg={context.theme.text.muted}>review: {labels[state()?.mode ?? "manual"]}</text>
+            {(value) => (
+              <text fg={context.theme.text.muted}>
+                {context.ui.experimental?.permissions.mode() === "autoaccept"
+                  ? "permissions: client auto accept"
+                  : value().preset === "configured"
+                    ? `review: ${labels[value().mode]}`
+                    : `permissions: ${presets[value().preset].title}`}
+              </text>
+            )}
           </Show>
         )
       },

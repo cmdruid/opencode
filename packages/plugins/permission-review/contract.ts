@@ -5,6 +5,12 @@ import { Schema } from "effect"
 export const ReviewMode = Schema.Literals(["manual", "shadow", "auto"])
 export type ReviewMode = typeof ReviewMode.Type
 
+export const Preset = Schema.Literals(["configured", "read-only", "workspace", "auto", "shadow", "full"])
+export type Preset = typeof Preset.Type
+
+export const Selection = Schema.Struct({ preset: Preset, mode: ReviewMode })
+export type Selection = typeof Selection.Type
+
 export const Assessment = Schema.Struct({
   ...ReviewResult.fields,
   requestID: Schema.String,
@@ -26,7 +32,8 @@ export const Assessment = Schema.Struct({
 export type Assessment = typeof Assessment.Type
 
 export const State = Schema.Struct({
-  mode: ReviewMode,
+  ...Selection.fields,
+  inheritedFrom: AssertInput.fields.sessionID.pipe(Schema.optional),
   model: Model.Ref,
   actions: Schema.Array(Schema.String).pipe(Schema.optional),
 })
@@ -42,6 +49,10 @@ export const Contract = Rpc.define({
     },
     set: {
       input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, mode: ReviewMode })),
+      output: Schema.toStandardSchemaV1(State),
+    },
+    select: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, preset: Preset })),
       output: Schema.toStandardSchemaV1(State),
     },
     history: {

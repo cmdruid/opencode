@@ -34,6 +34,7 @@ import { PersistentPty } from "@opencode/core/persistent-pty"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Permission } from "@opencode/core/permission"
+import { PermissionSaved } from "@opencode/core/permission/saved"
 import { Reference } from "@opencode/core/reference"
 import { Rpc } from "@opencode/core/rpc"
 import { Skill } from "@opencode/core/skill"
@@ -86,7 +87,12 @@ const permissionLayer = Layer.succeed(
   }),
 )
 
-export const makePluginTestLayer = (permission = permissionLayer, generate = generateLayer, mcp = emptyMcpLayer) =>
+// Pass null to exercise the real permission service and its registered plugin hooks.
+export const makePluginTestLayer = (
+  permission: typeof permissionLayer | null = permissionLayer,
+  generate = generateLayer,
+  mcp = emptyMcpLayer,
+) =>
   AppNodeBuilder.build(
     LayerNode.group([
       AppProcess.node,
@@ -122,6 +128,7 @@ export const makePluginTestLayer = (permission = permissionLayer, generate = gen
       PersistentPty.node,
       LocationServiceMap.node,
       Permission.node,
+      PermissionSaved.node,
       PluginHooks.node,
       Reference.node,
       Rpc.node,
@@ -140,7 +147,7 @@ export const makePluginTestLayer = (permission = permissionLayer, generate = gen
       Config.node.replace(configLayer),
       Mcp.node.replace(mcp),
       Generate.node.replace(generate),
-      Permission.node.replace(permission),
+      ...(permission ? [Permission.node.replace(permission)] : []),
       offlineModels,
     ],
   ).pipe(Layer.provideMerge(configLayer))

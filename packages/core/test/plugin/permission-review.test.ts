@@ -96,6 +96,7 @@ it.live("session review modes persist, stay local to the session, and leave manu
       yield* rpc.call(Contract.id, "set", { sessionID: session.id, mode: "always" }).pipe(Effect.flip),
     ).toMatchObject({ type: "rpc.invalid_input" })
     yield* host.storage.set(`mode/${session.id}`, "corrupt")
+    yield* host.storage.remove(`selection/${session.id}`)
     expect((yield* client.get({ sessionID: session.id })).mode).toBe("manual")
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result).toBeUndefined()
     expect(calls).toHaveLength(1)

@@ -202,6 +202,9 @@ export function createPluginContext(input: {
       memory: (key, options) => host.storage.memory(`plugin.${input.id}.${key}`, options),
     },
     ui: {
+      experimental: {
+        permissions: { mode: () => host.local.permission.mode },
+      },
       dialog: dialogApi,
       toast: toastApi,
       format: {

@@ -16,7 +16,12 @@ test("the plugin exposes session modes and assessment details through the real T
     time: { created: 0, updated: 0 },
   }
   const updates: { sessionID: string; mode: ReviewMode }[] = []
-  const state = { mode: "shadow" as ReviewMode, model: { providerID: "test", id: "reviewer" }, actions: ["read"] }
+  const state = {
+    preset: "configured",
+    mode: "shadow" as ReviewMode,
+    model: { providerID: "test", id: "reviewer" },
+    actions: ["read"],
+  }
   await using setup = await createAppFixture({
     width: 112,
     height: 36,
