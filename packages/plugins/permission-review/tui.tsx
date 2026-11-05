@@ -78,7 +78,7 @@ export default Plugin.define({
                           "",
                           "OpenCode's effective approval requirements and denials always apply. Presets can add approval requirements; Full access adds none. The selected reviewer handles requests that still need approval.",
                           "",
-                          "Use /permission-review to change the reviewer without changing scope. Shadow is available there for testing.",
+                          "Use /permissions-test to change the reviewer without changing scope. Shadow is available there for testing.",
                           "",
                           "Selections persist for this session and are inherited by subagents unless overridden there. Existing prompts and running reviews keep their current decision flow.",
                           "",
@@ -112,11 +112,11 @@ export default Plugin.define({
         },
         {
           id: "permission-review.mode",
-          title: "Permission review mode",
+          title: "Permissions test",
           description: "Choose a reviewer or Shadow testing without changing scope",
           group: "Session",
           palette: true,
-          slash: { name: "permission-review" },
+          slash: { name: "permissions-test" },
           enabled: () => current() !== undefined,
           async run() {
             const session = current()
@@ -124,7 +124,7 @@ export default Plugin.define({
             await (async () => {
               const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
               const mode = await context.ui.dialog.select<ReviewMode>({
-                title: "Permission review — this session",
+                title: "Permissions test — this session",
                 current: state.mode,
                 options: [
                   { value: "manual", title: labels.manual, description: "Use existing permission prompts" },
