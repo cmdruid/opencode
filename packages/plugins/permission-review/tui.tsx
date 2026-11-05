@@ -4,12 +4,12 @@ import { Contract, type Assessment, type Preset, type ReviewMode, type State } f
 
 const labels = { manual: "Manual", shadow: "Shadow", auto: "Approve for me" } satisfies Record<ReviewMode, string>
 const presets = {
-  "read-only": { title: "Read only", description: "Read files; ask before edits and commands" },
-  workspace: { title: "Ask for approval", description: "Edit locally; ask for commands and network" },
-  auto: { title: "Approve for me", description: "Edit locally; model reviews other requests" },
-  shadow: { title: "Shadow", description: "Edit locally; model suggests, you decide" },
-  full: { title: "Full access", description: "Allow requests except explicit denials" },
-  configured: { title: "Configured rules", description: "Reset to configured rules and reviewer" },
+  "read-only": { title: "Read only", description: "Read files; ask for edits and shell" },
+  workspace: { title: "Ask for approval", description: "Local edits; ask for shell/network" },
+  auto: { title: "Approve for me", description: "Local edits; model reviews requests" },
+  shadow: { title: "Shadow", description: "Local edits; model suggests, you decide" },
+  full: { title: "Full access", description: "Allow tools; denials still apply" },
+  configured: { title: "Configured rules", description: "Reset rules and reviewer" },
 } satisfies Record<Preset, { title: string; description: string }>
 
 export default Plugin.define({
@@ -93,7 +93,7 @@ export default Plugin.define({
                     {
                       value: true,
                       title: "Enable full access",
-                      description: "Commands, outside files and network; deny rules remain",
+                      description: "Shell, outside files, network",
                     },
                   ],
                 })
