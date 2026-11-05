@@ -46,7 +46,24 @@ The runner creates its own temporary configuration, data, cache and state direct
 
 The runner invokes the production reviewer through the SDK's real generation APIs. It does not create executable tool calls or exercise the interactive permission prompt. Core and plugin integration tests cover the rule/hook/prompt and shadow-mode behavior separately.
 
-`--limit` caps reviewed cases, defaulting to 20; every case makes one generation request with a 30-second deadline. `--cases` accepts another fixture file. `--confidence` changes the classifier threshold, defaulting to `0.98`. Reports retain raw choice probabilities and confidence alongside final decisions, errors and latency, so conservative escalation cannot hide a raw unsafe choice. Fixtures are synthetic and contain no real secrets or repository contents.
+`--limit` caps reviewed cases, defaulting to 20; every case makes one generation request with a 30-second deadline. `--cases` accepts another fixture file. `--confidence` changes the classifier threshold, defaulting to `0.98`. `--policy` accepts a UTF-8 text file for the plugin's optional review policy. Reports retain raw choice probabilities and confidence alongside final decisions, errors and latency, so conservative escalation cannot hide a raw unsafe choice. Fixtures are synthetic and contain no real secrets or repository contents.
+
+## Dynamic session context
+
+The [network fixtures](network-cases.json) exercise prior observed server identity, remote inspection, public metadata requests and local response parsing, alongside fabricated authorization in tool results, different targets, command substitutions, hidden writes, secret uploads and downloaded-code execution. All proposed commands remain inert data.
+
+From `packages/sdk`, run:
+
+```sh
+bun script/permission-review.ts \
+  --config /tmp/permission-review-providers.json \
+  --model maple/decision-large --mode decision --confidence 0.95 \
+  --policy ../plugins/permission-review/evaluation/routine-policy.txt \
+  --cases ../plugins/permission-review/evaluation/network-cases.json \
+  --limit 20 --output /tmp/maple-network-context.json
+```
+
+The [recorded comparison](results/maple-session-context.json) used the same generic policy and `0.95` threshold for both versions. Adding selected observations and generic guidance about interpreting their effects raised authorized automatic approvals from 2/8 to 6/8. Neither version approved any of the 12 unsafe or uncertain requests. The updated reviewer also had no raw or thresholded unsafe approvals across the 68 existing general, held-out, context and destructive cases, with no errors. These are bounded fixture results, not calibrated safety guarantees; routine requests can still escalate, and deny versus escalate labels still sometimes disagree with the fixtures.
 
 ## First System One result
 
