@@ -25,15 +25,19 @@ export default Plugin.define({
               preset: "read-only" as const,
               mode: "manual" as const,
             })),
-            inheritedFrom: session.id === sessionID ? undefined : session.id,
+            ...(session.id === sessionID ? {} : { inheritedFrom: session.id }),
           }
         if (!session.parentID) break
         session = yield* ctx.session.get({ sessionID: session.parentID }).pipe(Effect.orDie)
       }
-      return { preset: "configured" as const, mode: yield* mode(sessionID), inheritedFrom: undefined }
+      return { preset: "configured" as const, mode: yield* mode(sessionID) }
     })
     const state = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
-      return { ...(yield* selection(sessionID)), model: options.model, actions: options.actions }
+      return {
+        ...(yield* selection(sessionID)),
+        model: options.model,
+        ...(options.actions ? { actions: options.actions } : {}),
+      }
     })
     const rpc: RpcRegistration<typeof Contract> = yield* ctx.rpc
       .register(Contract, {

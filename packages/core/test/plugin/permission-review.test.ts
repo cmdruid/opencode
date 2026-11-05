@@ -5,7 +5,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { Rpc } from "@opencode/core/rpc"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
 import { testEffect } from "../lib/effect"
@@ -81,12 +81,15 @@ it.live("session review modes persist, stay local to the session, and leave manu
       },
     })
     const client = host.rpc(Contract)
+    // The generic HTTP RPC envelope encodes Schema.Json, including optional state fields.
+    expect(Schema.is(Schema.Json)(yield* client.get({ sessionID: session.id }))).toBe(true)
     expect((yield* client.get({ sessionID: session.id })).mode).toBe("shadow")
     yield* client.set({ sessionID: session.id, mode: "manual" })
     const request = { id: Permission.ID.create(), sessionID: session.id, action: "read", resources: ["README.md"] }
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result).toBeUndefined()
     expect(calls).toHaveLength(0)
     yield* client.set({ sessionID: session.id, mode: "auto" })
+    expect(Schema.is(Schema.Json)(yield* client.get({ sessionID: session.id }))).toBe(true)
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result?.decision).toBe("approve")
     expect(calls).toHaveLength(1)
     expect((yield* client.get({ sessionID: other.id })).mode).toBe("shadow")
