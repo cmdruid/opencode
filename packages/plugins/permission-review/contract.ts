@@ -5,6 +5,7 @@ import { Schema } from "effect"
 export const ReviewMode = Schema.Literals(["manual", "shadow", "auto"])
 export type ReviewMode = typeof ReviewMode.Type
 
+// Retain configured/shadow for saved state and existing RPC clients, outside the main selector.
 export const Preset = Schema.Literals(["configured", "read-only", "workspace", "auto", "shadow", "full"])
 export type Preset = typeof Preset.Type
 

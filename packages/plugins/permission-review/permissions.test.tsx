@@ -37,6 +37,20 @@ async function fixture(options: { auto?: boolean; autoaccept?: boolean; fail?: b
       if (url.pathname === `/api/session/${session.id}/message`) return json({ data: [], cursor: {} })
       if (url.pathname === `/api/session/${session.id}/inbox`) return json({ data: [] })
       if (url.pathname === "/api/rpc/opencode.permission-review/get") return json({ output: state })
+      if (url.pathname === "/api/rpc/opencode.permission-review/set") {
+        expect(await request.json()).toMatchObject({ input: { sessionID: session.id, mode: "shadow" } })
+        state.preset = "shadow"
+        state.mode = "shadow"
+        updates.push("shadow")
+        setup.events.emit({
+          id: "evt_shadow",
+          created: updates.length,
+          type: "rpc.opencode.permission-review.changed",
+          location: { directory },
+          data: { sessionID: session.id, state },
+        })
+        return json({ output: state })
+      }
       if (url.pathname === "/api/rpc/opencode.permission-review/select") {
         if (options.fail) return new Response("Fixture RPC failure", { status: 500 })
         const body = Schema.decodeUnknownSync(
@@ -84,41 +98,48 @@ test("/permissions opens the real selector, changes modes, shows the active pres
   expect(setup.captureCharFrame()).toContain("Approve for me")
   expect(setup.captureCharFrame()).toContain("Full access")
   expect(setup.captureCharFrame()).toContain("shell/network")
+  expect(setup.captureCharFrame()).not.toContain("Configured rules")
+  expect(setup.captureCharFrame()).not.toContain("Shadow")
   setup.resize(58, 30)
   await setup.renderOnce()
   expect(setup.captureCharFrame()).toContain("Ask for approval")
   await choose(setup, "Read only")
   await setup.waitForFrame(
-    (frame) => frame.includes("permissions:") && frame.includes("Read only") && !frame.includes("Permissions — this session"),
+    (frame) =>
+      frame.includes("permissions:") && frame.includes("Read only") && !frame.includes("Permissions — this session"),
   )
   setup.resize(112, 36)
   await setup.renderOnce()
-  for (const label of ["Ask for approval", "Approve for me", "Shadow"]) {
+  for (const label of ["Ask for approval", "Approve for me"]) {
     await open(setup)
     await choose(setup, label)
     await setup.waitForFrame((frame) => frame.includes(`permissions: ${label}`))
   }
-  expect(setup.updates).toEqual(["read-only", "workspace", "auto", "shadow"])
   await setup.mockInput.typeText("/permission-review")
-  await setup.waitForFrame((frame) => frame.includes("Choose how this session handles requests"))
+  await setup.waitForFrame((frame) => frame.includes("Shadow testing without changing scope"))
   setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => frame.includes("Permissions — this session"))
+  await setup.waitForFrame((frame) => frame.includes("Permission review — this session"))
   await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+  await choose(setup, "Shadow")
+  await setup.waitForFrame((frame) => frame.includes("permissions: Shadow"))
+  expect(setup.updates).toEqual(["read-only", "workspace", "auto", "shadow"])
+  await open(setup)
   setup.mockInput.pressKey("i", { ctrl: true })
   await setup.waitForFrame((frame) => frame.includes("Active permissions"))
-  expect(setup.captureCharFrame()).toContain("Preset: Shadow")
+  expect(setup.captureCharFrame()).toContain("Preset: Ask for approval")
+  expect(setup.captureCharFrame()).toContain("Reviewer: Shadow")
   expect(setup.captureCharFrame()).toContain("test/reviewer")
   expect(setup.captureCharFrame()).toContain("not an OS sandbox")
 })
 
-test("full access requires a second selection that defaults to cancel, and configured rules reset the preset", async () => {
+test("full access requires a second selection that defaults to cancel and explains configured approval rules remain", async () => {
   await using setup = await fixture()
   await setup.ready
   await setup.waitForFrame((frame) => frame.includes("review: Manual"))
   await open(setup)
   await choose(setup, "Full access")
   await setup.waitForFrame((frame) => frame.includes("Enable full access?"))
-  expect(setup.captureCharFrame()).toContain("Shell, outside files, network")
+  expect(setup.captureCharFrame()).toContain("Keep configured approval rules")
   await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
   setup.mockInput.pressEnter()
   await setup.waitForFrame((frame) => !frame.includes("Enable full access?"))
@@ -132,9 +153,8 @@ test("full access requires a second selection that defaults to cancel, and confi
   await setup.waitForFrame((frame) => frame.includes("permissions: Full access"))
   expect(setup.updates).toEqual(["full"])
   await open(setup)
-  await choose(setup, "Configured rules")
-  await setup.waitForFrame((frame) => frame.includes("review: Manual"))
-  expect(setup.updates).toEqual(["full", "configured"])
+  expect(setup.captureCharFrame()).not.toContain("Configured rules")
+  expect(setup.captureCharFrame()).toContain("Configured limits still apply")
 })
 
 for (const options of [{ auto: true }, { autoaccept: true }]) {
@@ -142,11 +162,15 @@ for (const options of [{ auto: true }, { autoaccept: true }]) {
     await using setup = await fixture(options)
     await setup.ready
     await setup.waitForFrame((frame) => frame.includes("permissions: client auto accept"))
-    await open(setup)
-    await choose(setup, "Ask for approval")
-    await setup.waitForFrame((frame) => frame.includes("Turn off auto accept"))
-    expect(setup.captureCharFrame()).toContain("restart without it")
-    expect(setup.updates).toEqual([])
+    for (const label of ["Ask for approval", "Full access"]) {
+      await open(setup)
+      await choose(setup, label)
+      await setup.waitForFrame((frame) => frame.includes("Turn off auto accept"))
+      expect(setup.captureCharFrame()).toContain("restart without it")
+      expect(setup.updates).toEqual([])
+      setup.mockInput.pressEnter()
+      await setup.waitForFrame((frame) => !frame.includes("Turn off auto accept"))
+    }
   })
 }
 
