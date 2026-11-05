@@ -168,6 +168,7 @@ export function Session(props: {
   const sessionID = route.sessionID
   const { navigate } = useRoute()
   const data = useData()
+  const plugins = usePlugin()
   const local = useLocal()
   const args = useArgs()
   const configState = useConfig()
@@ -1618,7 +1619,11 @@ export function Session(props: {
                     {(_) => {
                       const request = promptedPermissions()[0]
                       return request ? (
-                        <PermissionPrompt request={request} directory={session()?.location.directory} />
+                        <PermissionPrompt
+                          request={request}
+                          directory={session()?.location.directory}
+                          actions={plugins.permissionActions()}
+                        />
                       ) : null
                     }}
                   </Show>

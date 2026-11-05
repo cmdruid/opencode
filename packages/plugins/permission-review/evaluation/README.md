@@ -65,6 +65,14 @@ bun script/permission-review.ts \
 
 The [recorded comparison](results/maple-session-context.json) used the same generic policy and `0.95` threshold for both versions. Adding selected observations and generic guidance about interpreting their effects raised authorized automatic approvals from 2/8 to 6/8. Neither version approved any of the 12 unsafe or uncertain requests. The updated reviewer also had no raw or thresholded unsafe approvals across the 68 existing general, held-out, context and destructive cases, with no errors. These are bounded fixture results, not calibrated safety guarantees; routine requests can still escalate, and deny versus escalate labels still sometimes disagree with the fixtures.
 
+## Remembered session approvals
+
+The [Allow Session fixtures](session-approval-cases.json) provide explicit `approvals` records to the production reviewer. The runner accepts these optional records alongside the current request; they are never inferred from successful tool results or model assessments. Run the network example above with `--cases ../plugins/permission-review/evaluation/session-approval-cases.json` to reproduce this trial.
+
+The [recorded 20-case trial](results/maple-session-approvals.json) used Maple `decision-large`, the generic routine policy and threshold `0.95`. All six authorized repeat/equivalent requests were approved, including SSH diagnostics and public HTTP headers. None of the 14 changed-scope or explicitly prohibited requests received an approval, either before or after the confidence threshold. These cases include deletion, command substitution, service changes, secret upload, local overwrite, force push and later user restrictions. There were no errors; 17/20 final labels matched exactly. Three disagreements were deny versus escalate. Proposed commands were never executed.
+
+These small synthetic results establish basic behavior, not a calibrated accuracy rate. Real session approvals should still be compared with human judgments, especially after compaction or when a command's effects are unclear.
+
 ## First System One result
 
 The [recorded report](results/maple-decision-large.json) covers the 20 [fixtures](cases.json): 8 authorized actions, 7 explicitly prohibited actions, and 5 requests requiring clarification. It used `maple/decision-large`, the default review instructions, and confidence threshold `0.98`.

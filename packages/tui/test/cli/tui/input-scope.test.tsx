@@ -14,7 +14,7 @@ import { ThemeProvider } from "../../../src/context/theme"
 import { FormPrompt, FORM_MODE } from "../../../src/routes/session/form"
 import { PermissionPrompt } from "../../../src/routes/session/permission"
 import { DialogProvider } from "../../../src/ui/dialog"
-import { ToastProvider } from "../../../src/ui/toast"
+import { ToastProvider, useToast } from "../../../src/ui/toast"
 import { emptyThemeSource, tmpdir } from "../../fixture/fixture"
 import { createApi, createEventStream, createFetch, json } from "../../fixture/tui-client"
 import { TestTuiContexts } from "../../fixture/tui-environment"
@@ -28,6 +28,7 @@ async function mountPanes(root: string, render: () => JSX.Element, parentID?: st
   const ready = Promise.withResolvers<void>()
   let peer!: TextareaRenderable
   let keymap!: Keymap
+  let toast!: ReturnType<typeof useToast>
   const transport = createFetch((url, request) => {
     if (url.pathname === "/api/session/ses_scoped")
       return json({
@@ -56,6 +57,7 @@ async function mountPanes(root: string, render: () => JSX.Element, parentID?: st
   function Panes() {
     const data = useData()
     keymap = Keymap.use()
+    toast = useToast()
     onMount(() => void data.session.sync("ses_scoped").then(ready.resolve, ready.reject))
     return (
       <box>
@@ -99,7 +101,7 @@ async function mountPanes(root: string, render: () => JSX.Element, parentID?: st
   app.renderer.start()
   await ready.promise
   await app.renderOnce()
-  return { app, setActive, replies, cancellations, submissions, peer, keymap }
+  return { app, setActive, replies, cancellations, submissions, peer, keymap, toast }
 }
 
 function form(fields: FormWithLocation["fields"]): FormWithLocation {
@@ -282,6 +284,54 @@ test("permission review explanations remain visible while choosing a reply", asy
     await panes.app.waitForFrame((frame) => frame.includes("required."))
     expect(panes.app.captureCharFrame()).toContain("Allow once")
     expect(panes.app.captureCharFrame()).toContain("Reject")
+  } finally {
+    panes.app.renderer.destroy()
+  }
+})
+
+test("a failing plugin permission action stays pending and does not submit twice", async () => {
+  await using tmp = await tmpdir()
+  const completion = Promise.withResolvers<void>()
+  const calls: PermissionRequest[] = []
+  const [enabled, setEnabled] = createSignal(true)
+  const panes = await mountPanes(tmp.path, () => (
+    <PermissionPrompt
+      request={request}
+      actions={
+        enabled()
+          ? [
+              {
+                id: "plugin:test:remember",
+                title: "Allow Session",
+                description: "Remember this example",
+                run: (request) => {
+                  calls.push(request)
+                  return completion.promise
+                },
+              },
+            ]
+          : []
+      }
+    />
+  ))
+  try {
+    panes.setActive(true)
+    panes.app.mockInput.pressArrow("right")
+    await panes.app.waitForFrame((frame) => frame.includes("Remember this example"))
+    panes.app.mockInput.pressEnter()
+    await panes.app.waitFor(() => calls.length === 1)
+    panes.app.mockInput.pressEnter()
+    expect(calls).toEqual([request])
+    expect(panes.replies).toEqual([])
+    completion.reject(new Error("Permission action unavailable"))
+    await panes.app.waitFor(() => panes.toast.currentToast?.message === "Permission action unavailable")
+    expect(panes.replies).toEqual([])
+    setEnabled(false)
+    await panes.app.waitForFrame((frame) => !frame.includes("Allow Session"))
+    panes.app.mockInput.pressEnter()
+    await panes.app.waitFor(() => panes.replies.length === 1)
+    expect(panes.replies).toEqual([{ decision: "once" }])
+    expect(calls).toHaveLength(1)
   } finally {
     panes.app.renderer.destroy()
   }

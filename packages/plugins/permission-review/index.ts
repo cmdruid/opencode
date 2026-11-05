@@ -3,13 +3,28 @@ import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
 import { Clock, Effect, Option, Schema } from "effect"
 import path from "node:path"
 import type { AssertInput } from "@opencode/plugin/permission"
-import { Assessment, Contract, ReviewMode, Selection } from "./contract.js"
+import { Assessment, Contract, ReviewMode, Selection, SessionApproval } from "./contract.js"
 import { Options, review } from "./review.js"
 
 export default Plugin.define({
   id: "opencode.permission-review",
   effect: Effect.fn(function* (ctx) {
     const options = yield* Schema.decodeUnknownEffect(Options)(ctx.options).pipe(Effect.orDie)
+    const approvals = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
+      const entries: SessionApproval[] = []
+      let after: string | undefined
+      do {
+        const page = yield* ctx.storage.scan({ prefix: `approval/${sessionID}/`, after, limit: 100 })
+        entries.push(
+          ...page.entries.flatMap((entry) => {
+            const value = Schema.decodeUnknownOption(SessionApproval)(entry.value)
+            return Option.isSome(value) && value.value.sessionID === sessionID ? [value.value] : []
+          }),
+        )
+        after = page.next
+      } while (after)
+      return entries.toSorted((a, b) => b.at - a.at)
+    })
     const mode = Effect.fn(function* (sessionID: string) {
       const value = yield* ctx.storage.get(`mode/${sessionID}`)
       if (value === undefined) return options.defaultMode ?? (options.shadow ? "shadow" : "auto")
@@ -41,6 +56,47 @@ export default Plugin.define({
     })
     const rpc: RpcRegistration<typeof Contract> = yield* ctx.rpc
       .register(Contract, {
+        allowSession: Effect.fn(function* (input) {
+          // Resolve the pending request on the server; a client cannot invent an approval example.
+          const pending = yield* ctx.permission.list({ sessionID: input.sessionID }).pipe(Effect.orDie)
+          const request = pending.find((request) => request.id === input.requestID)
+          if (!request) return yield* Effect.die(new Error("Permission request is no longer pending"))
+          const history = yield* ctx.session.context({ sessionID: input.sessionID }).pipe(Effect.orDie)
+          const user = history.findLast((message) => message.type === "user")
+          const approval = yield* Schema.decodeUnknownEffect(SessionApproval)({
+            requestID: request.id,
+            sessionID: request.sessionID,
+            action: request.action,
+            resources: request.resources,
+            ...(request.metadata ? { metadata: request.metadata } : {}),
+            directory: ctx.location.directory,
+            toolCalls: history
+              .filter((message) => message.type === "assistant")
+              .filter((message) => message.id === request.source?.messageID)
+              .flatMap((message) => message.content)
+              .flatMap((part) =>
+                part.type === "tool" && part.id === request.source?.id && part.state.status !== "streaming"
+                  ? [{ name: part.name, input: part.state.input }]
+                  : [],
+              ),
+            ...(user ? { afterUserMessageID: user.id } : {}),
+            at: yield* Clock.currentTimeMillis,
+          }).pipe(Effect.orDie)
+          // Store only after a successful explicit reply. Model approvals and ordinary once/always replies never enter here.
+          yield* ctx.permission
+            .reply({ sessionID: request.sessionID, requestID: request.id, decision: "once" })
+            .pipe(Effect.orDie)
+          yield* ctx.storage.set(`approval/${input.sessionID}/${request.id}`, approval)
+          return approval
+        }),
+        approvals: Effect.fn(function* (input) {
+          yield* ctx.session.get(input).pipe(Effect.orDie)
+          return yield* approvals(input.sessionID)
+        }),
+        revoke: Effect.fn(function* (input) {
+          yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
+          yield* ctx.storage.remove(`approval/${input.sessionID}/${input.requestID}`)
+        }),
         get: Effect.fn(function* (input) {
           return yield* state(input.sessionID)
         }),
@@ -114,7 +170,10 @@ export default Plugin.define({
         const selected = (yield* selection(event.request.sessionID)).mode
         if (selected === "manual") return
         const started = yield* Clock.currentTimeMillis
-        const result = yield* review(ctx, event, options).pipe(
+        const remembered = (yield* approvals(event.request.sessionID))
+          .filter((entry) => entry.action === event.request.action)
+          .slice(0, 20)
+        const result = yield* review(ctx, event, options, remembered).pipe(
           Effect.catch(() =>
             Effect.succeed({
               decision: "escalate" as const,

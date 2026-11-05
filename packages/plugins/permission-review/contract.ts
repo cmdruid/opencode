@@ -12,6 +12,19 @@ export type Preset = typeof Preset.Type
 export const Selection = Schema.Struct({ preset: Preset, mode: ReviewMode })
 export type Selection = typeof Selection.Type
 
+export const SessionApproval = Schema.Struct({
+  requestID: Schema.String,
+  sessionID: AssertInput.fields.sessionID,
+  action: Schema.String,
+  resources: Schema.Array(Schema.String),
+  metadata: Schema.Record(Schema.String, Schema.Json).pipe(Schema.optional),
+  directory: Schema.String,
+  toolCalls: Schema.Array(Schema.Struct({ name: Schema.String, input: Schema.Record(Schema.String, Schema.Json) })),
+  afterUserMessageID: Schema.String.pipe(Schema.optional),
+  at: Schema.Number,
+})
+export type SessionApproval = typeof SessionApproval.Type
+
 export const Assessment = Schema.Struct({
   ...ReviewResult.fields,
   requestID: Schema.String,
@@ -44,6 +57,22 @@ export type State = typeof State.Type
 export const Contract = Rpc.define({
   id: "opencode.permission-review",
   methods: {
+    allowSession: {
+      input: Schema.toStandardSchemaV1(
+        Schema.Struct({ sessionID: AssertInput.fields.sessionID, requestID: Schema.String }),
+      ),
+      output: Schema.toStandardSchemaV1(SessionApproval),
+    },
+    approvals: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID })),
+      output: Schema.toStandardSchemaV1(Schema.Array(SessionApproval)),
+    },
+    revoke: {
+      input: Schema.toStandardSchemaV1(
+        Schema.Struct({ sessionID: AssertInput.fields.sessionID, requestID: Schema.String }),
+      ),
+      output: Schema.toStandardSchemaV1(Schema.Void),
+    },
     get: {
       input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID })),
       output: Schema.toStandardSchemaV1(State),

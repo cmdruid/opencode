@@ -487,12 +487,23 @@ export interface Keymap {
   }
 }
 
+/** A plugin-owned action in the native permission prompt. Experimental: may change without compatibility guarantees. */
+export interface PermissionAction {
+  readonly id: string
+  readonly title: string
+  readonly description: string
+  readonly enabled?: (request: PermissionRequest) => boolean
+  readonly run: (request: PermissionRequest) => void | Promise<void>
+}
+
 export interface UI {
   /** Experimental: may change without compatibility guarantees. */
   readonly experimental?: {
     readonly permissions: {
       /** Effective client behavior, including --auto. Reactive in a Solid computation. */
       mode(): "prompt" | "autoaccept"
+      /** Register an additional explicit user choice; automatically removed when the plugin unloads. */
+      action?: (action: PermissionAction) => () => void
     }
   }
   readonly dialog: Dialog
