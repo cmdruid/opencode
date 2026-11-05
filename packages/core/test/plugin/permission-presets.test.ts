@@ -7,7 +7,7 @@ import { PluginHost } from "@opencode/core/plugin/host"
 import { Rpc } from "@opencode/core/rpc"
 import { ProjectTable } from "@opencode/core/project/sql"
 import { Model } from "@opencode/schema/model"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import path from "node:path"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
@@ -48,6 +48,7 @@ for (const preset of ["configured", "read-only", "workspace", "auto", "shadow", 
     Effect.gen(function* () {
       const test = yield* setup
       yield* test.client.select({ sessionID: test.session.id, preset })
+      expect(Schema.is(Schema.Json)(yield* test.client.get({ sessionID: test.session.id }))).toBe(true)
       for (const item of [
         { action: "read", resources: ["README.md"], expected: true },
         { action: "read", resources: [path.join(test.host.location.directory, "README.md")], expected: true },
@@ -156,6 +157,7 @@ it.live("presets persist, inherit through subagents, isolate unrelated sessions 
     const grandchild = yield* test.host.session.create({ parentID: child.id })
     const other = yield* test.host.session.create({ title: "Unrelated" })
     yield* test.client.select({ sessionID: test.session.id, preset: "read-only" })
+    expect(Schema.is(Schema.Json)(yield* test.client.get({ sessionID: grandchild.id }))).toBe(true)
     expect(yield* test.client.get({ sessionID: grandchild.id })).toMatchObject({
       preset: "read-only",
       mode: "manual",
