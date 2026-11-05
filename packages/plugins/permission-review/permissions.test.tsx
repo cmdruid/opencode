@@ -115,10 +115,10 @@ test("/permissions opens the real selector, changes modes, shows the active pres
     await choose(setup, label)
     await setup.waitForFrame((frame) => frame.includes(`permissions: ${label}`))
   }
-  await setup.mockInput.typeText("/permission-review")
+  await setup.mockInput.typeText("/permissions-test")
   await setup.waitForFrame((frame) => frame.includes("Shadow testing without changing scope"))
   setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => frame.includes("Permission review — this session"))
+  await setup.waitForFrame((frame) => frame.includes("Permissions test — this session"))
   await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
   await choose(setup, "Shadow")
   await setup.waitForFrame((frame) => frame.includes("permissions: Shadow"))
