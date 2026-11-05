@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { createMemo, For, Match, Show, Switch } from "solid-js"
+import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
 import { useTheme, useThemes } from "../../context/theme"
@@ -16,6 +16,7 @@ import { usePathFormatter } from "../../context/path-format"
 import { SimulationSemantics } from "../../simulation/semantics"
 import { PatchDiff } from "../../component/patch-diff"
 import { useToast } from "../../ui/toast"
+import type { PermissionAction } from "@opencode/plugin/tui/context"
 
 type PermissionStage = "permission" | "reject"
 
@@ -110,12 +111,18 @@ function EditBody(props: { file?: string; diff?: string; patch?: string }) {
   )
 }
 
-export function PermissionPrompt(props: { request: PermissionRequest; directory?: string }) {
+export function PermissionPrompt(props: {
+  request: PermissionRequest
+  directory?: string
+  actions?: readonly PermissionAction[]
+}) {
   const data = useData()
   const toast = useToast()
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
+    busy: false,
   })
+  const actions = createMemo(() => props.actions?.filter((action) => action.enabled?.(props.request) ?? true) ?? [])
   const pathFormatter = usePathFormatter()
   const session = createMemo(() => data.session.get(props.request.sessionID))
 
@@ -241,6 +248,9 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                       </scrollbox>
                     )}
                   </Show>
+                  <Show when={actions().find((action) => action.id === option)}>
+                    {(action) => <text fg={theme.text.muted}>{action().description}</text>}
+                  </Show>
                   <Show when={option === "always"} fallback={presentationBody()}>
                     <box paddingLeft={1} gap={1}>
                       <For each={permissionAlwaysLines(props.request)}>
@@ -250,18 +260,25 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                   </Show>
                 </box>
               )}
-              options={
-                props.request.save?.length
-                  ? {
-                      once: permissionOptionLabel("once"),
-                      always: permissionOptionLabel("always"),
-                      reject: permissionOptionLabel("reject"),
-                    }
-                  : { once: permissionOptionLabel("once"), reject: permissionOptionLabel("reject") }
-              }
+              options={{
+                once: permissionOptionLabel("once"),
+                ...Object.fromEntries(actions().map((action) => [action.id, action.title])),
+                ...(props.request.save?.length ? { always: permissionOptionLabel("always") } : {}),
+                reject: permissionOptionLabel("reject"),
+              }}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {
+                if (store.busy) return
+                const action = actions().find((action) => action.id === option)
+                if (action) {
+                  setStore("busy", true)
+                  void Promise.resolve()
+                    .then(() => action.run(props.request))
+                    .catch((error: unknown) => toast.error(error))
+                    .finally(() => setStore("busy", false))
+                  return
+                }
                 if (option === "always") {
                   reply("always")
                   return
@@ -274,7 +291,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                   reply("reject")
                   return
                 }
-                reply("once")
+                if (option === "once") reply("once")
               }}
             />
           )
@@ -441,10 +458,13 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
 }) {
   const theme = useTheme()
   const dimensions = useTerminalDimensions()
-  const keys = Object.keys(props.options) as (keyof T)[]
+  const keys = createMemo(() => Object.keys(props.options) as (keyof T)[])
   const [store, setStore] = createStore({
-    selected: keys[0],
+    selected: keys()[0],
     expanded: false,
+  })
+  createEffect(() => {
+    if (!keys().includes(store.selected)) setStore("selected", keys()[0])
   })
   const narrow = createMemo(() => dimensions().width < 80)
   const shortcuts = Keymap.useShortcuts()
@@ -483,15 +503,15 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
             },
           ]
         : []),
-      ...(keys.length > 1
+      ...(keys().length > 1
         ? [
             {
               bind: "left,h",
               title: "Previous option",
               group: group(),
               run: () => {
-                const index = keys.indexOf(store.selected)
-                setStore("selected", keys[(index - 1 + keys.length) % keys.length])
+                const index = keys().indexOf(store.selected)
+                setStore("selected", keys()[(index - 1 + keys().length) % keys().length])
               },
             },
             {
@@ -499,8 +519,8 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
               title: "Next option",
               group: group(),
               run: () => {
-                const index = keys.indexOf(store.selected)
-                setStore("selected", keys[(index + 1) % keys.length])
+                const index = keys().indexOf(store.selected)
+                setStore("selected", keys()[(index + 1) % keys().length])
               },
             },
           ]
@@ -579,10 +599,12 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
             label: props.choicesLabel ?? "Permission choices",
           }))}
           flexDirection="row"
+          flexWrap="wrap"
+          maxWidth="100%"
           gap={1}
           flexShrink={0}
         >
-          <For each={keys}>
+          <For each={keys()}>
             {(option) => (
               <box
                 id={`${id()}.action.${String(option)}`}
@@ -616,13 +638,13 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
             )}
           </For>
         </box>
-        <box flexDirection="row" gap={2} flexShrink={0}>
+        <box flexDirection="row" flexWrap="wrap" columnGap={2} flexShrink={0}>
           <Show when={props.fullscreen}>
             <text fg={theme.text.base}>
               {shortcuts.get("permission.prompt.fullscreen")} <span style={{ fg: theme.text.muted }}>{hint()}</span>
             </text>
           </Show>
-          <Show when={keys.length > 1}>
+          <Show when={keys().length > 1}>
             <text fg={theme.text.base}>
               {"⇆"} <span style={{ fg: theme.text.muted }}>select</span>
             </text>

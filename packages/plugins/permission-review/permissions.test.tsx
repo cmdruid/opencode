@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { InputRenderable } from "@opentui/core"
+import { InputRenderable, TextareaRenderable } from "@opentui/core"
 import { Schema } from "effect"
 import { createAppFixture } from "../../tui/test/fixture/app"
 import { directory, json } from "../../tui/test/fixture/tui-client"
@@ -86,6 +86,7 @@ async function fixture(
 }
 
 async function open(setup: Awaited<ReturnType<typeof fixture>>) {
+  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof TextareaRenderable)
   await setup.mockInput.typeText("/permissions")
   await setup.waitForFrame((frame) => frame.includes("Choose permissions and approval handling"))
   setup.mockInput.pressEnter()
@@ -106,6 +107,7 @@ for (const entry of [
   test(`home-screen ${entry.command} creates an empty session before applying permissions`, async () => {
     await using setup = await fixture({ home: true })
     await setup.ready
+    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof TextareaRenderable)
     expect(setup.created).toEqual([])
     await setup.mockInput.typeText(entry.command)
     await setup.waitForFrame((frame) => frame.includes("Choose") && frame.includes(entry.command))
@@ -125,6 +127,7 @@ for (const entry of [
 test("home-screen session creation failure shows an error without opening a selector", async () => {
   await using setup = await fixture({ home: true, createFail: true })
   await setup.ready
+  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof TextareaRenderable)
   await setup.mockInput.typeText("/permissions")
   await setup.waitForFrame((frame) => frame.includes("Choose permissions and approval handling"))
   setup.mockInput.pressEnter()

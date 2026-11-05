@@ -51,9 +51,82 @@ export default Plugin.define({
       return false
     }
 
+    context.ui.experimental?.permissions.action?.({
+      id: "allow-session",
+      title: "Allow Session",
+      description: "Remember this example. Future requests still reviewed.",
+      enabled: () => context.ui.experimental?.permissions.mode() === "prompt",
+      async run(request) {
+        await rpc.allowSession(
+          { sessionID: request.sessionID, requestID: request.id },
+          { location: context.data.session.get(request.sessionID)?.location },
+        )
+        context.ui.toast.show({ message: "Approved and remembered for this session", variant: "info" })
+      },
+    })
+
     context.keymap.layer(() => ({
       mode: "global",
       commands: [
+        {
+          id: "permission-review.approvals",
+          title: "Session approvals",
+          description: "Inspect or revoke examples remembered with Allow Session",
+          group: "Session",
+          palette: true,
+          slash: { name: "session-approvals" },
+          enabled: () => current() !== undefined,
+          async run() {
+            const session = current()
+            if (!session) return
+            await (async () => {
+              const entries = await rpc.approvals({ sessionID: session.sessionID }, { location: session.location })
+              if (!entries.length) {
+                await context.ui.dialog.alert({
+                  title: "Session approvals",
+                  message:
+                    "No remembered approvals. Choose Allow Session on a permission prompt to save an example for this session's reviewer.",
+                })
+                return
+              }
+              const selected = await context.ui.dialog.select({
+                title: "Session approvals",
+                options: entries.map((entry) => ({
+                  value: entry,
+                  title: entry.action,
+                  description: entry.resources.join(", "),
+                })),
+              })
+              if (!selected) return
+              const revoke = await context.ui.dialog.select({
+                title: "Remembered approval",
+                current: false,
+                options: [
+                  { value: false, title: "Keep approval" },
+                  { value: true, title: "Revoke approval", description: "Stop including it in future reviews" },
+                ],
+                actions: [
+                  {
+                    bind: "ctrl+i",
+                    title: "Details",
+                    selection: "none",
+                    onTrigger: () =>
+                      void context.ui.dialog.alert({
+                        title: "Remembered approval",
+                        message: `${JSON.stringify(selected, null, 2)}\n\nUsed only as guidance in this session; future requests are still reviewed.`,
+                      }),
+                  },
+                ],
+              })
+              if (!revoke) return
+              await rpc.revoke(
+                { sessionID: session.sessionID, requestID: selected.requestID },
+                { location: session.location },
+              )
+              context.ui.toast.show({ message: "Session approval revoked", variant: "info" })
+            })().catch(failure)
+          },
+        },
         {
           id: "permission-review.permissions",
           title: "Permissions",

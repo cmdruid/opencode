@@ -11,6 +11,7 @@ import { DateTime, Effect } from "effect"
 import { it } from "../../core/test/lib/effect"
 import { location } from "../../core/test/fixture/location"
 import { review } from "./review.js"
+import type { SessionApproval } from "./contract.js"
 
 const options = { model: Model.Ref.parse("test/reviewer") }
 const messageID = SessionMessage.ID.create()
@@ -102,6 +103,40 @@ it.effect("malformed chat responses escalate instead of granting permission", ()
   Effect.gen(function* () {
     for (const text of ['{"decision":"approve"}', '{"decision":"always","reason":"safe"}', "yes", "{}"])
       expect((yield* review(context(text).ctx, event, options)).decision).toBe("escalate")
+  }),
+)
+
+it.effect("both reviewer adapters receive exact remembered examples and their scope guidance", () =>
+  Effect.gen(function* () {
+    const approval: SessionApproval = {
+      requestID: "per_remembered",
+      sessionID: event.request.sessionID,
+      action: "shell",
+      resources: ["git status"],
+      directory: "/project",
+      toolCalls: [{ name: "shell", input: { command: "git status", description: "Inspect checkout" } }],
+      afterUserMessageID: "msg_user",
+      at: 1,
+    }
+    for (const mode of ["chat", "decision"] as const) {
+      const fixture = context('{"decision":"escalate","reason":"Uncertain"}')
+      yield* review(fixture.ctx, event, { ...options, mode }, [approval])
+      const evidence =
+        mode === "chat"
+          ? fixture.prompts[0].split("Evidence (JSON):\n")[1]
+          : fixture.decisions[0].input.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+      expect(JSON.parse(evidence).sessionApprovals).toEqual([approval])
+      const prompt = mode === "chat" ? fixture.prompts[0] : fixture.decisions[0].questions[0].instructions
+      expect(prompt).toContain("Later user restrictions override earlier approvals")
+      expect(prompt).toContain("New targets or materially different effects still require authorization")
+      const oversized = context("")
+      expect(
+        (yield* review(oversized.ctx, event, { ...options, mode }, [{ ...approval, resources: ["x".repeat(48_001)] }]))
+          .decision,
+      ).toBe("escalate")
+      expect(oversized.prompts).toEqual([])
+      expect(oversized.decisions).toEqual([])
+    }
   }),
 )
 

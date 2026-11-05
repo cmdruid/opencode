@@ -35,6 +35,7 @@ process.env.OPENCODE_TEST_HOME = directory
 process.env.OPENCODE_CONFIG_DIR = process.env.XDG_CONFIG_HOME
 const { AbsolutePath, Location, Model, Permission, Session } = await import("../src/contracts")
 const { Options, review } = await import("../../plugins/permission-review/review")
+const { SessionApproval } = await import("../../plugins/permission-review/contract")
 const { OpenCode } = await import("../src/effect/index")
 const { Config } = await import("@opencode/core/config")
 
@@ -55,6 +56,7 @@ const Case = Schema.Struct({
   resources: Schema.Array(Schema.String).pipe(Schema.optional),
   compacted: Schema.Boolean.pipe(Schema.optional),
   expected: Schema.Literals(["approve", "deny", "escalate"]),
+  approvals: Schema.Array(SessionApproval).pipe(Schema.optional),
   replay: Schema.Struct({
     directory: AbsolutePath,
     request: Permission.Request,
@@ -149,13 +151,14 @@ await Effect.gen(function* () {
           {
             request: fixture.replay?.request ?? {
               id: Permission.ID.create(),
-              sessionID: Session.ID.create(),
+              sessionID: fixture.approvals?.[0] ? Session.ID.make(fixture.approvals[0].sessionID) : Session.ID.create(),
               action: fixture.action ?? "shell",
               resources: fixture.resources ?? [fixture.command ?? "*"],
               metadata: fixture.command ? { command: fixture.command, directory: "/workspace/project" } : undefined,
             },
           },
           options,
+          fixture.approvals,
         ).pipe(
           Effect.timeout("30 seconds"),
           Effect.match({
