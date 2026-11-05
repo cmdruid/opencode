@@ -5,7 +5,9 @@ import { createAppFixture } from "../../tui/test/fixture/app"
 import { directory, json } from "../../tui/test/fixture/tui-client"
 import { Preset, type ReviewMode } from "./contract"
 
-async function fixture(options: { auto?: boolean; autoaccept?: boolean; fail?: boolean } = {}) {
+async function fixture(
+  options: { auto?: boolean; autoaccept?: boolean; fail?: boolean; home?: boolean; createFail?: boolean } = {},
+) {
   const session = {
     id: "ses_permissions_ui",
     title: "Permissions UI",
@@ -16,6 +18,8 @@ async function fixture(options: { auto?: boolean; autoaccept?: boolean; fail?: b
     time: { created: 0, updated: 0 },
   }
   const updates: Preset[] = []
+  const created: unknown[] = []
+  const submissions: string[] = []
   const state = {
     preset: "configured" as Preset,
     mode: "manual" as ReviewMode,
@@ -24,7 +28,7 @@ async function fixture(options: { auto?: boolean; autoaccept?: boolean; fail?: b
   const setup = await createAppFixture({
     width: 112,
     height: 36,
-    args: { sessionID: session.id, auto: options.auto },
+    args: { sessionID: options.home ? undefined : session.id, auto: options.auto },
     config: {
       animations: false,
       tabs: { enabled: false },
@@ -32,7 +36,14 @@ async function fixture(options: { auto?: boolean; autoaccept?: boolean; fail?: b
       plugins: [import.meta.dir],
     },
     fetch: async (url, request) => {
-      if (url.pathname === "/api/session") return json({ data: [session], cursor: {} })
+      if (request.method === "POST" && !url.pathname.startsWith("/api/rpc/")) submissions.push(url.pathname)
+      if (url.pathname === "/api/session" && request.method === "POST") {
+        if (options.createFail) return new Response("Fixture session creation failure", { status: 500 })
+        created.push(await request.json())
+        return json({ data: session })
+      }
+      if (url.pathname === "/api/session")
+        return json({ data: options.home && !created.length ? [] : [session], cursor: {} })
       if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
       if (url.pathname === `/api/session/${session.id}/message`) return json({ data: [], cursor: {} })
       if (url.pathname === `/api/session/${session.id}/inbox`) return json({ data: [] })
@@ -71,7 +82,7 @@ async function fixture(options: { auto?: boolean; autoaccept?: boolean; fail?: b
       }
     },
   })
-  return { ...setup, updates }
+  return { ...setup, updates, created, submissions }
 }
 
 async function open(setup: Awaited<ReturnType<typeof fixture>>) {
@@ -87,6 +98,41 @@ async function choose(setup: Awaited<ReturnType<typeof fixture>>, label: string)
   await setup.waitForFrame((frame) => frame.includes(label))
   setup.mockInput.pressEnter()
 }
+
+for (const entry of [
+  { command: "/permissions", title: "Permissions — this session", label: "Read only", preset: "read-only" },
+  { command: "/permissions-test", title: "Permissions test — this session", label: "Shadow", preset: "shadow" },
+] as const) {
+  test(`home-screen ${entry.command} creates an empty session before applying permissions`, async () => {
+    await using setup = await fixture({ home: true })
+    await setup.ready
+    expect(setup.created).toEqual([])
+    await setup.mockInput.typeText(entry.command)
+    await setup.waitForFrame((frame) => frame.includes("Choose") && frame.includes(entry.command))
+    setup.mockInput.pressEnter()
+    await setup.waitForFrame((frame) => frame.includes(entry.title))
+    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+    expect(setup.created).toMatchObject([{ location: { directory } }])
+    await choose(setup, entry.label)
+    await setup.waitForFrame((frame) => frame.includes(`permissions: ${entry.label}`))
+    expect(setup.updates).toEqual([entry.preset])
+    expect(setup.submissions).toEqual(["/api/session"])
+    await open(setup)
+    expect(setup.created).toHaveLength(1)
+  })
+}
+
+test("home-screen session creation failure shows an error without opening a selector", async () => {
+  await using setup = await fixture({ home: true, createFail: true })
+  await setup.ready
+  await setup.mockInput.typeText("/permissions")
+  await setup.waitForFrame((frame) => frame.includes("Choose permissions and approval handling"))
+  setup.mockInput.pressEnter()
+  await setup.waitForFrame((frame) => frame.includes("UnexpectedStatus: 500"))
+  expect(setup.captureCharFrame()).not.toContain("Permissions — this session")
+  expect(setup.created).toEqual([])
+  expect(setup.updates).toEqual([])
+})
 
 test("/permissions opens the real selector, changes modes, shows the active preset and fits a narrow terminal", async () => {
   await using setup = await fixture()

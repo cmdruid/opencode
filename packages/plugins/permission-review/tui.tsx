@@ -21,6 +21,18 @@ export default Plugin.define({
       if (route.type !== "session") return
       return { sessionID: route.sessionID, location: context.data.session.get(route.sessionID)?.location }
     }
+    const openSession = async () => {
+      const session = current()
+      if (session) return session
+      if (context.ui.router.current().type !== "home") return
+      // Create only the session record: permissions are selected before its first prompt.
+      const created = await context.client.session.create({
+        location: context.location ?? context.data.location.default(),
+      })
+      await context.data.session.sync(created.id)
+      context.ui.router.navigate({ type: "session", sessionID: created.id })
+      return { sessionID: created.id, location: created.location }
+    }
     const failure = (error: unknown) =>
       context.ui.toast.show({
         title: "Permission review",
@@ -49,11 +61,11 @@ export default Plugin.define({
           group: "Session",
           palette: true,
           slash: { name: "permissions" },
-          enabled: () => current() !== undefined,
+          enabled: () => ["home", "session"].includes(context.ui.router.current().type),
           async run() {
-            const session = current()
-            if (!session) return
             await (async () => {
+              const session = await openSession()
+              if (!session) return
               const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
               const preset = await context.ui.dialog.select<Preset>({
                 title: "Permissions — this session",
@@ -117,11 +129,11 @@ export default Plugin.define({
           group: "Session",
           palette: true,
           slash: { name: "permissions-test" },
-          enabled: () => current() !== undefined,
+          enabled: () => ["home", "session"].includes(context.ui.router.current().type),
           async run() {
-            const session = current()
-            if (!session) return
             await (async () => {
+              const session = await openSession()
+              if (!session) return
               const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
               const mode = await context.ui.dialog.select<ReviewMode>({
                 title: "Permissions test — this session",
