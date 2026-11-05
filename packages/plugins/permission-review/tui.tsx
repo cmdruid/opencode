@@ -8,8 +8,8 @@ const presets = {
   workspace: { title: "Ask for approval", description: "Local edits; ask for shell/network" },
   auto: { title: "Approve for me", description: "Local edits; model reviews requests" },
   shadow: { title: "Shadow", description: "Local edits; model suggests, you decide" },
-  full: { title: "Full access", description: "Allow tools; denials still apply" },
-  configured: { title: "Configured rules", description: "Reset rules and reviewer" },
+  full: { title: "Full access", description: "Configured limits still apply" },
+  configured: { title: "No additional restrictions", description: "Use OpenCode's effective permissions" },
 } satisfies Record<Preset, { title: string; description: string }>
 
 export default Plugin.define({
@@ -57,8 +57,12 @@ export default Plugin.define({
               const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
               const preset = await context.ui.dialog.select<Preset>({
                 title: "Permissions — this session",
-                current: state.preset,
-                options: (Object.keys(presets) as Preset[]).map((value) => ({ value, ...presets[value] })),
+                current:
+                  state.preset === "configured" ? undefined : state.preset === "shadow" ? "workspace" : state.preset,
+                options: (["read-only", "workspace", "auto", "full"] as const).map((value) => ({
+                  value,
+                  ...presets[value],
+                })),
                 actions: [
                   {
                     bind: "ctrl+i",
@@ -67,12 +71,14 @@ export default Plugin.define({
                       context.ui.dialog.alert({
                         title: "Active permissions",
                         message: [
-                          `Preset: ${presets[state.preset].title}`,
+                          `Preset: ${presets[state.preset === "shadow" ? "workspace" : state.preset].title}`,
                           `Reviewer: ${labels[state.mode]} (${state.model.providerID}/${state.model.id})`,
                           `Reviewed actions: ${state.actions?.join(", ") ?? "all requests needing approval"}`,
                           ...(state.inheritedFrom ? [`Inherited from: ${state.inheritedFrom}`] : []),
                           "",
-                          "Explicit deny rules always apply. Local reads and edits keep configured approval requirements. Shell, network, outside-directory and other tool requests need approval in workspace presets.",
+                          "OpenCode's effective approval requirements and denials always apply. Presets can add approval requirements; Full access adds none. The selected reviewer handles requests that still need approval.",
+                          "",
+                          "Use /permission-review to change the reviewer without changing scope. Shadow is available there for testing.",
                           "",
                           "Selections persist for this session and are inherited by subagents unless overridden there. Existing prompts and running reviews keep their current decision flow.",
                           "",
@@ -83,7 +89,7 @@ export default Plugin.define({
                 ],
               })
               if (!preset) return
-              if (preset !== "full" && !(await requirePrompts())) return
+              if (!(await requirePrompts())) return
               if (preset === "full") {
                 const confirmed = await context.ui.dialog.select({
                   title: "Enable full access?",
@@ -93,7 +99,7 @@ export default Plugin.define({
                     {
                       value: true,
                       title: "Enable full access",
-                      description: "Shell, outside files, network",
+                      description: "Keep configured approval rules",
                     },
                   ],
                 })
@@ -107,7 +113,7 @@ export default Plugin.define({
         {
           id: "permission-review.mode",
           title: "Permission review mode",
-          description: "Choose how this session handles requests that need approval",
+          description: "Choose a reviewer or Shadow testing without changing scope",
           group: "Session",
           palette: true,
           slash: { name: "permission-review" },
@@ -117,10 +123,6 @@ export default Plugin.define({
             if (!session) return
             await (async () => {
               const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
-              if (state.preset !== "configured") {
-                context.keymap.dispatch("permission-review.permissions")
-                return
-              }
               const mode = await context.ui.dialog.select<ReviewMode>({
                 title: "Permission review — this session",
                 current: state.mode,
@@ -206,7 +208,11 @@ export default Plugin.define({
                   ? "permissions: client auto accept"
                   : value().preset === "configured"
                     ? `review: ${labels[value().mode]}`
-                    : `permissions: ${presets[value().preset].title}`}
+                    : `permissions: ${presets[value().preset].title}${
+                        (value().preset === "read-only" || value().preset === "full") && value().mode !== "manual"
+                          ? ` · ${labels[value().mode]}`
+                          : ""
+                      }`}
               </text>
             )}
           </Show>

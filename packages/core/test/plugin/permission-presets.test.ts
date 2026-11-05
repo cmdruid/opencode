@@ -150,6 +150,61 @@ it.live("configured denials survive full access and saved grants cannot bypass a
   }),
 )
 
+it.live("all presets preserve effective asks and denials; only review can approve an ask once", () =>
+  Effect.gen(function* () {
+    const test = yield* setup
+    yield* test.host.session.update({
+      sessionID: test.session.id,
+      permissions: [
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "read", resource: "*.env", effect: "ask" },
+        { action: "shell", resource: "deploy *", effect: "ask" },
+        { action: "shell", resource: "git push *", effect: "deny" },
+      ],
+    })
+    for (const preset of ["configured", "read-only", "workspace", "auto", "shadow", "full"] as const) {
+      yield* test.client.select({ sessionID: test.session.id, preset })
+      const before = test.calls.length
+      const request = { sessionID: test.session.id, action: "shell", resources: ["deploy production"] }
+      expect(yield* test.permission.allows(request)).toBe(false)
+      expect(test.calls).toHaveLength(before)
+      expect((yield* test.permission.ask({ ...request, action: "read", resources: ["secrets.env"] })).effect).toBe(
+        "ask",
+      )
+      expect((yield* test.permission.ask({ ...request, resources: ["git push origin dev"] })).effect).toBe("deny")
+      expect(test.calls).toHaveLength(before)
+      expect((yield* test.permission.ask(request)).effect).toBe(preset === "auto" ? "allow" : "ask")
+      expect(test.calls).toHaveLength(before + (preset === "auto" || preset === "shadow" ? 1 : 0))
+    }
+    const saved = yield* PermissionSaved.Service
+    expect(yield* saved.list()).toHaveLength(0)
+    yield* test.permission.close
+  }),
+)
+
+it.live("changing the reviewer preserves the selected scope, including Shadow testing", () =>
+  Effect.gen(function* () {
+    const test = yield* setup
+    for (const preset of ["read-only", "workspace", "full"] as const) {
+      yield* test.client.select({ sessionID: test.session.id, preset })
+      for (const mode of ["shadow", "auto", "manual"] as const) {
+        const next = yield* test.client.set({ sessionID: test.session.id, mode })
+        expect(next).toMatchObject({
+          preset: preset === "workspace" && mode !== "manual" ? mode : preset,
+          mode,
+        })
+        expect(
+          yield* test.permission.allows({ sessionID: test.session.id, action: "edit", resources: ["index.ts"] }),
+        ).toBe(preset !== "read-only")
+        expect(
+          yield* test.permission.allows({ sessionID: test.session.id, action: "shell", resources: ["bun test"] }),
+        ).toBe(preset === "full")
+      }
+    }
+    expect(test.calls).toHaveLength(0)
+  }),
+)
+
 it.live("presets persist, inherit through subagents, isolate unrelated sessions and reset to configured behavior", () =>
   Effect.gen(function* () {
     const test = yield* setup

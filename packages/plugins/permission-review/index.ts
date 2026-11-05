@@ -45,9 +45,15 @@ export default Plugin.define({
           return yield* state(input.sessionID)
         }),
         set: Effect.fn(function* (input) {
-          yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
+          const current = yield* selection(input.sessionID)
+          const preset =
+            current.preset === "workspace" || current.preset === "auto" || current.preset === "shadow"
+              ? input.mode === "manual"
+                ? "workspace"
+                : input.mode
+              : current.preset
           yield* ctx.storage.set(`mode/${input.sessionID}`, input.mode)
-          yield* ctx.storage.set(`selection/${input.sessionID}`, { preset: "configured", mode: input.mode })
+          yield* ctx.storage.set(`selection/${input.sessionID}`, { preset, mode: input.mode })
           const next = yield* state(input.sessionID)
           yield* rpc.events.emit("changed", { sessionID: input.sessionID, state: next }).pipe(Effect.orDie)
           return next
@@ -87,11 +93,8 @@ export default Plugin.define({
       Effect.gen(function* () {
         if (event.effect === "deny") return
         const selected = yield* selection(event.sessionID)
-        if (selected.preset === "configured") return
-        if (selected.preset === "full") {
-          event.effect = "allow"
-          return
-        }
+        // Scope presets may tighten OpenCode's decision, never relax it.
+        if (selected.preset === "configured" || selected.preset === "full") return
         // Glob and grep authorize their search directory through external_directory first.
         if (["glob", "grep", "question"].includes(event.action)) return
         if (event.action === "read" || (event.action === "edit" && selected.preset !== "read-only")) {
