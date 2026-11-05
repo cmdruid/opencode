@@ -88,7 +88,7 @@ async function fixture(
 async function open(setup: Awaited<ReturnType<typeof fixture>>) {
   await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof TextareaRenderable)
   await setup.mockInput.typeText("/permissions")
-  await setup.waitForFrame((frame) => frame.includes("Choose permissions and approval handling"))
+  await setup.waitForFrame((frame) => frame.includes("Choose permissions"))
   setup.mockInput.pressEnter()
   await setup.waitForFrame((frame) => frame.includes("Permissions — this session"))
   await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
@@ -100,24 +100,25 @@ async function choose(setup: Awaited<ReturnType<typeof fixture>>, label: string)
   setup.mockInput.pressEnter()
 }
 
-for (const entry of [
-  { command: "/permissions", title: "Permissions — this session", label: "Read only", preset: "read-only" },
-  { command: "/permissions-test", title: "Permissions test — this session", label: "Shadow", preset: "shadow" },
-] as const) {
-  test(`home-screen ${entry.command} creates an empty session before applying permissions`, async () => {
+for (const settings of [false, true]) {
+  test(`home-screen /permissions opens ${settings ? "settings" : "presets"} in one empty session`, async () => {
     await using setup = await fixture({ home: true })
     await setup.ready
-    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof TextareaRenderable)
     expect(setup.created).toEqual([])
-    await setup.mockInput.typeText(entry.command)
-    await setup.waitForFrame((frame) => frame.includes("Choose") && frame.includes(entry.command))
-    setup.mockInput.pressEnter()
-    await setup.waitForFrame((frame) => frame.includes(entry.title))
-    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+    await open(setup)
     expect(setup.created).toMatchObject([{ location: { directory } }])
-    await choose(setup, entry.label)
-    await setup.waitForFrame((frame) => frame.includes(`permissions: ${entry.label}`))
-    expect(setup.updates).toEqual([entry.preset])
+    if (settings) {
+      await choose(setup, "Settings")
+      await setup.waitForFrame((frame) => frame.includes("Permission settings — this session"))
+      await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+      expect(setup.updates).toEqual([])
+      await choose(setup, "Reviewer mode")
+      await setup.waitForFrame((frame) => frame.includes("Reviewer mode — this session"))
+      await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+    }
+    await choose(setup, settings ? "Shadow" : "Read only")
+    await setup.waitForFrame((frame) => frame.includes(`permissions: ${settings ? "Shadow" : "Read only"}`))
+    expect(setup.updates).toEqual([settings ? "shadow" : "read-only"])
     expect(setup.submissions).toEqual(["/api/session"])
     await open(setup)
     expect(setup.created).toHaveLength(1)
@@ -146,6 +147,7 @@ test("/permissions opens the real selector, changes modes, shows the active pres
   expect(setup.captureCharFrame()).toContain("Ask for approval")
   expect(setup.captureCharFrame()).toContain("Approve for me")
   expect(setup.captureCharFrame()).toContain("Full access")
+  expect(setup.captureCharFrame()).toContain("Settings")
   expect(setup.captureCharFrame()).toContain("shell/network")
   expect(setup.captureCharFrame()).not.toContain("Configured rules")
   expect(setup.captureCharFrame()).not.toContain("Shadow")
@@ -164,10 +166,12 @@ test("/permissions opens the real selector, changes modes, shows the active pres
     await choose(setup, label)
     await setup.waitForFrame((frame) => frame.includes(`permissions: ${label}`))
   }
-  await setup.mockInput.typeText("/permissions-test")
-  await setup.waitForFrame((frame) => frame.includes("Shadow testing without changing scope"))
-  setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => frame.includes("Permissions test — this session"))
+  await open(setup)
+  await choose(setup, "Settings")
+  await setup.waitForFrame((frame) => frame.includes("Permission settings — this session"))
+  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+  await choose(setup, "Reviewer mode")
+  await setup.waitForFrame((frame) => frame.includes("Reviewer mode — this session"))
   await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
   await choose(setup, "Shadow")
   await setup.waitForFrame((frame) => frame.includes("permissions: Shadow"))
@@ -233,5 +237,29 @@ test("a failed selection displays an error and keeps the previous permissions", 
     (frame) => frame.includes("Permission review") && !frame.includes("Permissions — this session"),
   )
   expect(setup.captureCharFrame()).toContain("review: Manual")
+  expect(setup.updates).toEqual([])
+})
+
+test("settings can be cancelled or inspected with auto accept without changing permissions", async () => {
+  await using setup = await fixture({ autoaccept: true })
+  await setup.ready
+  await setup.waitForFrame((frame) => frame.includes("permissions: client auto accept"))
+  await open(setup)
+  await choose(setup, "Settings")
+  await setup.waitForFrame((frame) => frame.includes("Permission settings — this session"))
+  expect(setup.updates).toEqual([])
+  setup.resize(58, 30)
+  await setup.renderOnce()
+  for (const title of ["Reviewer mode", "Session approvals", "Review history", "Active permissions"])
+    expect(setup.captureCharFrame()).toContain(title)
+  setup.mockInput.pressEscape()
+  await setup.waitForFrame((frame) => !frame.includes("Permission settings — this session"))
+  expect(setup.updates).toEqual([])
+  await open(setup)
+  await choose(setup, "Settings")
+  await setup.waitForFrame((frame) => frame.includes("Permission settings — this session"))
+  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+  await choose(setup, "Active permissions")
+  await setup.waitForFrame((frame) => frame.includes("Reviewer: Manual"))
   expect(setup.updates).toEqual([])
 })

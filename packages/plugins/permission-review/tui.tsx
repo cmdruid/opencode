@@ -65,68 +65,116 @@ export default Plugin.define({
       },
     })
 
+    async function showApprovals(session: NonNullable<ReturnType<typeof current>>) {
+      const entries = await rpc.approvals({ sessionID: session.sessionID }, { location: session.location })
+      if (!entries.length) {
+        await context.ui.dialog.alert({
+          title: "Session approvals",
+          message:
+            "No remembered approvals. Choose Allow Session on a permission prompt to save an example for this session's reviewer.",
+        })
+        return
+      }
+      const selected = await context.ui.dialog.select({
+        title: "Session approvals",
+        options: entries.map((entry) => ({
+          value: entry,
+          title: entry.action,
+          description: entry.resources.join(", "),
+        })),
+      })
+      if (!selected) return
+      const revoke = await context.ui.dialog.select({
+        title: "Remembered approval",
+        current: false,
+        options: [
+          { value: false, title: "Keep approval" },
+          { value: true, title: "Revoke approval", description: "Stop including it in future reviews" },
+        ],
+        actions: [
+          {
+            bind: "ctrl+i",
+            title: "Details",
+            selection: "none",
+            onTrigger: () =>
+              void context.ui.dialog.alert({
+                title: "Remembered approval",
+                message: `${JSON.stringify(selected, null, 2)}\n\nUsed only as guidance in this session; future requests are still reviewed.`,
+              }),
+          },
+        ],
+      })
+      if (!revoke) return
+      await rpc.revoke({ sessionID: session.sessionID, requestID: selected.requestID }, { location: session.location })
+      context.ui.toast.show({ message: "Session approval revoked", variant: "info" })
+    }
+
+    async function showReviewer(session: NonNullable<ReturnType<typeof current>>) {
+      const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
+      const mode = await context.ui.dialog.select<ReviewMode>({
+        title: "Reviewer mode — this session",
+        current: state.mode,
+        options: [
+          { value: "manual", title: labels.manual, description: "Use existing permission prompts" },
+          { value: "shadow", title: labels.shadow, description: "Suggest; you decide" },
+          {
+            value: "auto",
+            title: labels.auto,
+            description: "Approve, deny, or ask you",
+          },
+        ],
+      })
+      if (!mode || mode === state.mode) return
+      if (!(await requirePrompts())) return
+      await rpc.set({ sessionID: session.sessionID, mode }, { location: session.location })
+      context.ui.toast.show({ message: `Permission review: ${labels[mode]}`, variant: "info" })
+    }
+
+    async function showHistory(session: NonNullable<ReturnType<typeof current>>) {
+      const entries = await rpc.history({ sessionID: session.sessionID }, { location: session.location })
+      if (entries.length === 0) {
+        await context.ui.dialog.alert({
+          title: "Permission review history",
+          message:
+            "No completed assessments for this session. Manual mode and existing permission rules do not call the reviewer.",
+        })
+        return
+      }
+      const selected = await context.ui.dialog.select({
+        title: "Permission reviews — latest 50",
+        options: entries.map((entry) => ({
+          value: entry,
+          title: `${entry.decision} · ${entry.action}`,
+          description: entry.resources?.join(", ") ?? entry.requestID,
+          footer: entry.shadow ? "shadow" : "enforced",
+        })),
+      })
+      if (!selected) return
+      await context.ui.dialog.alert({ title: "Permission assessment", message: describe(selected) })
+    }
+
+    const showDetails = (state: State) =>
+      context.ui.dialog.alert({
+        title: "Active permissions",
+        message: [
+          `Preset: ${presets[state.preset === "shadow" ? "workspace" : state.preset].title}`,
+          `Reviewer: ${labels[state.mode]} (${state.model.providerID}/${state.model.id})`,
+          `Reviewed actions: ${state.actions?.join(", ") ?? "all requests needing approval"}`,
+          ...(state.inheritedFrom ? [`Inherited from: ${state.inheritedFrom}`] : []),
+          "",
+          "OpenCode's effective approval requirements and denials always apply. Presets can add approval requirements; Full access adds none. The selected reviewer handles requests that still need approval.",
+          "",
+          "Open Settings → Reviewer mode to change the reviewer without changing scope. Shadow is available there for testing.",
+          "",
+          "Selections persist for this session and are inherited by subagents unless overridden there. Existing prompts and running reviews keep their current decision flow.",
+          "",
+          "These are tool approval rules, not an OS sandbox. Commands run with your account's filesystem and network access.",
+        ].join("\n"),
+      })
+
     context.keymap.layer(() => ({
       mode: "global",
       commands: [
-        {
-          id: "permission-review.approvals",
-          title: "Session approvals",
-          description: "Inspect or revoke examples remembered with Allow Session",
-          group: "Session",
-          palette: true,
-          slash: { name: "session-approvals" },
-          enabled: () => current() !== undefined,
-          async run() {
-            const session = current()
-            if (!session) return
-            await (async () => {
-              const entries = await rpc.approvals({ sessionID: session.sessionID }, { location: session.location })
-              if (!entries.length) {
-                await context.ui.dialog.alert({
-                  title: "Session approvals",
-                  message:
-                    "No remembered approvals. Choose Allow Session on a permission prompt to save an example for this session's reviewer.",
-                })
-                return
-              }
-              const selected = await context.ui.dialog.select({
-                title: "Session approvals",
-                options: entries.map((entry) => ({
-                  value: entry,
-                  title: entry.action,
-                  description: entry.resources.join(", "),
-                })),
-              })
-              if (!selected) return
-              const revoke = await context.ui.dialog.select({
-                title: "Remembered approval",
-                current: false,
-                options: [
-                  { value: false, title: "Keep approval" },
-                  { value: true, title: "Revoke approval", description: "Stop including it in future reviews" },
-                ],
-                actions: [
-                  {
-                    bind: "ctrl+i",
-                    title: "Details",
-                    selection: "none",
-                    onTrigger: () =>
-                      void context.ui.dialog.alert({
-                        title: "Remembered approval",
-                        message: `${JSON.stringify(selected, null, 2)}\n\nUsed only as guidance in this session; future requests are still reviewed.`,
-                      }),
-                  },
-                ],
-              })
-              if (!revoke) return
-              await rpc.revoke(
-                { sessionID: session.sessionID, requestID: selected.requestID },
-                { location: session.location },
-              )
-              context.ui.toast.show({ message: "Session approval revoked", variant: "info" })
-            })().catch(failure)
-          },
-        },
         {
           id: "permission-review.permissions",
           title: "Permissions",
@@ -140,40 +188,54 @@ export default Plugin.define({
               const session = await openSession()
               if (!session) return
               const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
-              const preset = await context.ui.dialog.select<Preset>({
+              const preset = await context.ui.dialog.select<Preset | "settings">({
                 title: "Permissions — this session",
                 current:
                   state.preset === "configured" ? undefined : state.preset === "shadow" ? "workspace" : state.preset,
-                options: (["read-only", "workspace", "auto", "full"] as const).map((value) => ({
-                  value,
-                  ...presets[value],
-                })),
+                options: [
+                  ...(["read-only", "workspace", "auto", "full"] as const).map((value) => ({
+                    value,
+                    ...presets[value],
+                  })),
+                  { value: "settings", title: "Settings", description: "Reviewer, session approvals and history" },
+                ],
                 actions: [
                   {
                     bind: "ctrl+i",
                     title: "Details",
-                    onTrigger: () =>
-                      context.ui.dialog.alert({
-                        title: "Active permissions",
-                        message: [
-                          `Preset: ${presets[state.preset === "shadow" ? "workspace" : state.preset].title}`,
-                          `Reviewer: ${labels[state.mode]} (${state.model.providerID}/${state.model.id})`,
-                          `Reviewed actions: ${state.actions?.join(", ") ?? "all requests needing approval"}`,
-                          ...(state.inheritedFrom ? [`Inherited from: ${state.inheritedFrom}`] : []),
-                          "",
-                          "OpenCode's effective approval requirements and denials always apply. Presets can add approval requirements; Full access adds none. The selected reviewer handles requests that still need approval.",
-                          "",
-                          "Use /permissions-test to change the reviewer without changing scope. Shadow is available there for testing.",
-                          "",
-                          "Selections persist for this session and are inherited by subagents unless overridden there. Existing prompts and running reviews keep their current decision flow.",
-                          "",
-                          "These are tool approval rules, not an OS sandbox. Commands run with your account's filesystem and network access.",
-                        ].join("\n"),
-                      }),
+                    onTrigger: () => showDetails(state),
                   },
                 ],
               })
               if (!preset) return
+              if (preset === "settings") {
+                const setting = await context.ui.dialog.select({
+                  title: "Permission settings — this session",
+                  options: [
+                    { value: "mode", title: "Reviewer mode", description: "Manual, Shadow or Approve for me" },
+                    {
+                      value: "approvals",
+                      title: "Session approvals",
+                      description: "Inspect or revoke remembered examples",
+                    },
+                    {
+                      value: "history",
+                      title: "Review history",
+                      description: "Recent decisions and classifier scores",
+                    },
+                    {
+                      value: "details",
+                      title: "Active permissions",
+                      description: "Current scope, reviewer and inheritance",
+                    },
+                  ],
+                })
+                if (setting === "mode") await showReviewer(session)
+                if (setting === "approvals") await showApprovals(session)
+                if (setting === "history") await showHistory(session)
+                if (setting === "details") await showDetails(state)
+                return
+              }
               if (!(await requirePrompts())) return
               if (preset === "full") {
                 const confirmed = await context.ui.dialog.select({
@@ -192,74 +254,6 @@ export default Plugin.define({
               }
               await rpc.select({ sessionID: session.sessionID, preset }, { location: session.location })
               context.ui.toast.show({ message: `Permissions: ${presets[preset].title}`, variant: "info" })
-            })().catch(failure)
-          },
-        },
-        {
-          id: "permission-review.mode",
-          title: "Permissions test",
-          description: "Choose a reviewer or Shadow testing without changing scope",
-          group: "Session",
-          palette: true,
-          slash: { name: "permissions-test" },
-          enabled: () => ["home", "session"].includes(context.ui.router.current().type),
-          async run() {
-            await (async () => {
-              const session = await openSession()
-              if (!session) return
-              const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
-              const mode = await context.ui.dialog.select<ReviewMode>({
-                title: "Permissions test — this session",
-                current: state.mode,
-                options: [
-                  { value: "manual", title: labels.manual, description: "Use existing permission prompts" },
-                  { value: "shadow", title: labels.shadow, description: "Suggest; you decide" },
-                  {
-                    value: "auto",
-                    title: labels.auto,
-                    description: "Approve, deny, or ask you",
-                  },
-                ],
-              })
-              if (!mode || mode === state.mode) return
-              if (!(await requirePrompts())) return
-              await rpc.set({ sessionID: session.sessionID, mode }, { location: session.location })
-              context.ui.toast.show({ message: `Permission review: ${labels[mode]}`, variant: "info" })
-            })().catch(failure)
-          },
-        },
-        {
-          id: "permission-review.history",
-          title: "Permission review history",
-          description: "Inspect this session's latest reviewer assessments",
-          group: "Session",
-          palette: true,
-          slash: { name: "permission-reviews" },
-          enabled: () => current() !== undefined,
-          async run() {
-            const session = current()
-            if (!session) return
-            await (async () => {
-              const entries = await rpc.history({ sessionID: session.sessionID }, { location: session.location })
-              if (entries.length === 0) {
-                await context.ui.dialog.alert({
-                  title: "Permission review history",
-                  message:
-                    "No completed assessments for this session. Manual mode and existing permission rules do not call the reviewer.",
-                })
-                return
-              }
-              const selected = await context.ui.dialog.select({
-                title: "Permission reviews — latest 50",
-                options: entries.map((entry) => ({
-                  value: entry,
-                  title: `${entry.decision} · ${entry.action}`,
-                  description: entry.resources?.join(", ") ?? entry.requestID,
-                  footer: entry.shadow ? "shadow" : "enforced",
-                })),
-              })
-              if (!selected) return
-              await context.ui.dialog.alert({ title: "Permission assessment", message: describe(selected) })
             })().catch(failure)
           },
         },
