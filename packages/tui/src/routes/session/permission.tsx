@@ -17,6 +17,7 @@ import { SimulationSemantics } from "../../simulation/semantics"
 import { PatchDiff } from "../../component/patch-diff"
 import { useToast } from "../../ui/toast"
 import type { PermissionAction } from "@opencode/plugin/tui/context"
+import { stringWidth } from "../../util/string-width"
 
 type PermissionStage = "permission" | "reject"
 
@@ -228,7 +229,7 @@ export function PermissionPrompt(props: {
               instance={props.request.id}
               header={header()}
               body={(option) => (
-                <box gap={1} minHeight={0}>
+                <box gap={1} minHeight={0} flexShrink={1}>
                   <Show when={props.request.message}>
                     {(message) => (
                       <scrollbox
@@ -466,8 +467,12 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
   createEffect(() => {
     if (!keys().includes(store.selected)) setStore("selected", keys()[0])
   })
-  const narrow = createMemo(() => dimensions().width < 80)
   const shortcuts = Keymap.useShortcuts()
+  const narrow = createMemo(() => {
+    const choices = keys().reduce((width, key) => width + stringWidth(props.options[key]) + 3, 8)
+    const hints = 23 + (props.fullscreen ? stringWidth(shortcuts.get("permission.prompt.fullscreen") ?? "") + 13 : 0)
+    return dimensions().width < Math.max(80, choices + hints)
+  })
   const id = () => props.id ?? "session.permission"
   const group = () => props.group ?? "Permission"
   const dismiss = () => {
@@ -556,7 +561,7 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
         ? { top: dimensions().height * -1 + 1, bottom: 1, left: 2, right: 2, position: "absolute" }
         : {
             top: 0,
-            maxHeight: 15,
+            maxHeight: Math.min(dimensions().height - 2, narrow() ? 24 : 15),
             bottom: 0,
             left: 0,
             right: 0,
@@ -638,7 +643,7 @@ export function SessionQuestion<const T extends Record<string, string>>(props: {
             )}
           </For>
         </box>
-        <box flexDirection="row" flexWrap="wrap" columnGap={2} flexShrink={0}>
+        <box flexDirection="row" flexWrap="wrap" maxWidth="100%" columnGap={2} flexShrink={0}>
           <Show when={props.fullscreen}>
             <text fg={theme.text.base}>
               {shortcuts.get("permission.prompt.fullscreen")} <span style={{ fg: theme.text.muted }}>{hint()}</span>

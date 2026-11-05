@@ -116,6 +116,7 @@ test("Allow Session is a native choice and its remembered example can be revoked
     action: "shell",
     resources: ["git status"],
     save: ["git *"],
+    message: "Classifier confidence is below the threshold; please review this request.",
   }
   const approval = Schema.decodeUnknownSync(SessionApproval)({
     requestID: pending.id,
@@ -170,6 +171,9 @@ test("Allow Session is a native choice and its remembered example can be revoked
   await setup.waitForFrame((frame) => frame.includes("Allow Session"))
   expect(setup.captureCharFrame()).toContain("Always allow")
   expect(setup.captureCharFrame()).toContain("Reject")
+  setup.resize(80, 30)
+  await setup.renderOnce()
+  expect(setup.captureCharFrame()).toContain("enter confirm")
   setup.resize(44, 36)
   await setup.renderOnce()
   expect(setup.captureCharFrame()).toContain("Allow Session")
