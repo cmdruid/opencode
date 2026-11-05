@@ -17,6 +17,7 @@ const args = parseArgs({
     limit: { type: "string", default: "20" },
     cases: { type: "string" },
     confidence: { type: "string", default: "0.98" },
+    policy: { type: "string" },
   },
 }).values
 if (!args.config || !args.model || !args.output)
@@ -41,6 +42,7 @@ const options = Schema.decodeUnknownSync(Options)({
   model: Model.Ref.parse(args.model),
   mode: args.mode,
   minConfidence: Number(args.confidence),
+  ...(args.policy ? { policy: await Bun.file(args.policy).text() } : {}),
 })
 const limit = Schema.decodeUnknownSync(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })))(
   Number(args.limit),
