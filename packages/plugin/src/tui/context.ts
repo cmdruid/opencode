@@ -488,6 +488,13 @@ export interface Keymap {
 }
 
 export interface UI {
+  /** Experimental: may change without compatibility guarantees. */
+  readonly experimental?: {
+    readonly permissions: {
+      /** Effective client behavior, including --auto. Reactive in a Solid computation. */
+      mode(): "prompt" | "autoaccept"
+    }
+  }
   readonly dialog: Dialog
   readonly toast: Toast
   readonly format: {

@@ -31,15 +31,27 @@ Start with `defaultMode: "shadow"`: the reviewer records what it would decide, a
 
 The same package exports both the server plugin and its TUI companion. A connected development TUI discovers the companion from the server's plugin configuration.
 
-- `/permission-review` (or **Permission review mode** in the command palette) selects **Manual**, **Shadow**, or **Approve for me** for the current session.
-- The prompt footer displays the current review mode. The selection is stored on the server and survives reconnects; other sessions, children, and forks use their own selection or the configured default.
+- `/permissions` (or **Permissions** in the command palette) opens the session permissions selector. It marks the active preset; **Ctrl+I** shows its details, reviewer model, action filter and inheritance.
+- The prompt footer displays the active preset, or the review mode when using configured rules. Selections are stored on the server and survive reconnects. Subagents inherit the nearest selected ancestor's preset, unless explicitly overridden in that child. Unrelated sessions and forks without a parent relationship keep their own selection or the configured default.
+- `/permission-review` retains the **Manual**, **Shadow**, and **Approve for me** reviewer-only controls when using configured rules. With a preset selected it opens `/permissions`, so changing the reviewer cannot silently discard the preset's restrictions.
 - `/permission-reviews` opens the current session's latest 50 completed assessments. Select a row for the action, resources, model, reason, timing, raw classifier scores, and threshold. Rows distinguish shadow proposals from enforced decisions. Older assessments without classifier diagnostics remain readable.
 
-Mode changes apply to subsequent requests. Reviews already running use the mode selected when they started, and existing prompts still require a reply. Manual mode skips the reviewer; existing permission rules still apply. Keep the TUI's own permission setting at `prompt`: its separate `autoaccept` setting answers permission prompts automatically, including reviewer escalations.
+| Preset           | Permission behavior                                                                              | Reviewer                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| Read only        | Read and search files; ask before edits, commands, network and other tools                       | Human                                    |
+| Ask for approval | Read, search and edit locally; ask for shell, network, outside-directory and other tool requests | Human                                    |
+| Approve for me   | Same scope as Ask for approval                                                                   | Model approves once, denies or escalates |
+| Shadow           | Same scope as Ask for approval                                                                   | Model suggests; human decides            |
+| Full access      | Allow requests except explicit deny rules; requires a second confirmation, defaulting to cancel  | None                                     |
+| Configured rules | Restore ordinary configuration and saved grants, with the configured default review mode         | Configured default                       |
 
-The controls use the plugin's experimental typed RPC contract, so they require this plugin on the connected server. No additional HTTP API or generated client changes are needed.
+Local reads, searches and edits retain existing `ask` requirements, such as protected `.env` reads. All presets preserve explicit configured denials, including agent and session denials. Restrictive presets can require approval even when a saved "Always allow" grant exists; they do not delete those grants. Read only can still perform an edit if the user approves that request. These are tool approval policies, **not an OS sandbox**: an approved shell command runs with your account's filesystem and network access. Requests not covered by the reviewer's `actions` filter still ask the human.
 
-`actions` matches exact permission action names; omitted means all actions that require approval. The plugin does not change permission rules. An existing `allow` bypasses review and an existing `deny` stays denied. To have an action reviewed, its effective rule must be `ask`.
+Selections affect subsequent permission evaluations. Reviews already running use the mode selected when they started, and existing prompts still require a reply. The standard unattended policy still applies to headless runs. Keep every connected TUI at **Settings → Session → Permissions → Prompt**, without `--auto`: the separate `autoaccept` setting answers prompts automatically, including reviewer escalations. The selector detects this client's effective mode and refuses prompt-based presets while auto accept is active; its footer identifies the conflict. Other clients can still answer a shared session's prompts.
+
+The controls use the plugin's experimental typed RPC contract, so they require this plugin on the connected server. The selector also requires the fork's small `ui.experimental.permissions.mode()` TUI API to detect auto accept. Older clients receive an update message. No additional HTTP endpoints or generated client changes are needed. The legacy RPC `set` selects configured rules with the requested review mode; the new `select` RPC applies a complete preset.
+
+`actions` matches exact permission action names; omitted means all actions that require approval. Until a preset is selected, the plugin leaves existing rules unchanged: an `allow` bypasses review and a `deny` stays denied. The workspace presets add approval requirements through the existing `permission.evaluate` hook; they do not rewrite configuration or saved grants. Only requests whose final effect is `ask` reach the reviewer.
 
 For a decision model, set `mode` to `decision`. `minConfidence` defaults to `0.98`; lower-confidence responses escalate. This is a routing threshold, not a measured probability of safe execution. Evaluate the selected model and policy on representative actions before relying on it.
 
