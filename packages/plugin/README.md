@@ -9,7 +9,7 @@ Authoring interfaces and runtime loader support for OpenCode V2 plugins:
 
 ## Experimental permission review
 
-Server plugins can register `ctx.permission.hook("experimental.review", callback)` to review an actual permission request after rules, evaluation hooks, and unattended policy settle on `ask`. Unlike `evaluate`, this hook does not run for permission probes or rechecks of pending requests. Experimental: may change without compatibility guarantees.
+Server plugins can register `ctx.permission.hook("experimental.review", callback)` to review an actual permission request after rules, evaluation hooks, and unattended policy settle on `ask`. Unlike `evaluate`, this hook does not run for permission probes or ordinary saved-rule rechecks. Experimental: may change without compatibility guarantees.
 
 The callback receives `event.request`, including its ID and requesting tool source, and optional `event.agent`. It may set `event.result` to `{ decision: "approve" | "deny" | "escalate", reason: string }`. The reason must be nonempty. Promise callbacks return normally; Effect callbacks return an Effect, as with other hooks.
 
@@ -20,6 +20,8 @@ The callback receives `event.request`, including its ID and requesting tool sour
 The hook cannot override permissions already allowed or denied by the preceding evaluation. Missing results leave the request pending for human review. Invalid results, hook failures, and the 30-second review deadline fall back to the human prompt. Cancelling the caller interrupts the review without creating a prompt.
 
 This hook does not supply a reviewer model or change the default permission policy. Plugins own review policy, evidence collection, model calls, and any audit history. Reviewers run as trusted plugin code. Multiple review hooks share the mutable result, so plugins should leave an existing result unchanged when composing with another reviewer.
+
+After recording new authorization evidence, a plugin can call `ctx.experimental.permission.reviewPending({ sessionID, action })`. It re-evaluates a snapshot of queued requests for that session and action using their original agent, current permission rules and review hooks. Only approvals settle requests, as one-time replies; denials, uncertainty and failures stay pending. It creates no saved grants and does not replay tool execution. Requests already answered or cancelled are skipped. Experimental: may change without compatibility guarantees.
 
 ## Packaging And Runtime `effect`
 

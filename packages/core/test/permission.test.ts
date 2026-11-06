@@ -1005,3 +1005,50 @@ describe("shell scanner permission impact", () => {
     )
   }
 })
+
+it.effect("queued rechecks preserve requester rules and cannot reply twice after a user answer", () =>
+  Effect.gen(function* () {
+    yield* setup([])
+    const service = yield* Permission.Service
+    const agents = yield* Agent.Service
+    const hooks = yield* PluginHooks.Service
+    const pending = yield* waitForRequest()
+    const restricted = yield* service.ask(assertion({ agent: Agent.ID.make("restricted"), id: Permission.ID.create() }))
+    // Unknown agents deny immediately; explicitly configure one before queuing its request.
+    expect(restricted.effect).toBe("deny")
+    yield* agents.transform((editor) =>
+      editor.update(Agent.ID.make("restricted"), (agent) => {
+        agent.permissions = []
+      }),
+    )
+    const queued = yield* service.ask(assertion({ agent: Agent.ID.make("restricted"), id: Permission.ID.create() }))
+    yield* agents.transform((editor) =>
+      editor.update(Agent.ID.make("restricted"), (agent) => {
+        agent.permissions = [{ action: "*", resource: "*", effect: "deny" }]
+      }),
+    )
+    const started = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const reviewed: string[] = []
+    yield* hooks.register("permission", "experimental.review", (event) =>
+      Effect.gen(function* () {
+        reviewed.push(event.request.id)
+        yield* Deferred.succeed(started, undefined)
+        yield* Deferred.await(release)
+        event.result = { decision: "approve", reason: "Fixture approval" }
+      }),
+    )
+    const input = { sessionID: pending.request.sessionID, action: pending.request.action }
+    const recheck = yield* service.reviewPending(input).pipe(Effect.forkChild({ startImmediately: true }))
+    yield* Deferred.await(started)
+    yield* service.reviewPending(input)
+    expect(reviewed).toEqual([pending.request.id])
+    yield* service.reply({ requestID: pending.request.id, reply: "once" })
+    yield* Fiber.join(pending.fiber)
+    yield* Deferred.succeed(release, undefined)
+    yield* Fiber.join(recheck)
+    expect(yield* service.get(queued.id)).toBeDefined()
+    expect(yield* service.get(pending.request.id)).toBeUndefined()
+    yield* service.close
+  }),
+)

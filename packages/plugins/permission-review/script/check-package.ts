@@ -165,7 +165,10 @@ try {
   server = await start()
   const initial = await rpc<ServerSettings>("settings")
   assert.equal(initial.values.minConfidence, 0.98)
-  await rpc("saveSettings", { patch: { minConfidence: 0.91 } })
+  await rpc("saveSettings", {
+    patch: { minConfidence: 0.91 },
+    connection: { role: "classifier", url: `${model.url}custom/v1`, apiKey: "" },
+  })
   server.child.kill("SIGTERM")
   await server.child.exited
   server = await start()
@@ -183,14 +186,22 @@ try {
     resources: ["README.md"],
   })
   assert.equal(first.data.effect, "ask")
+  const queued = await request<{ data: { id: string; effect: string } }>(`/api/session/${session.data.id}/permission`, {
+    action: "read",
+    resources: ["README.md"],
+  })
+  assert.equal(queued.data.effect, "ask")
   assert.deepEqual(calls, [])
   await rpc("allowSession", { sessionID: session.data.id, requestID: first.data.id })
+  const pending = await request<{ data: { id: string }[] }>(`/api/session/${session.data.id}/permission`)
+  assert(!pending.data.some((item) => item.id === queued.data.id))
+  assert.deepEqual(calls, ["/custom/v1/systemone"])
   const permission = await request<{ data: { effect: string } }>(`/api/session/${session.data.id}/permission`, {
     action: "read",
     resources: ["README.md"],
   })
   assert.equal(permission.data.effect, "allow")
-  assert.deepEqual(calls, ["/v1/systemone"])
+  assert.deepEqual(calls, ["/custom/v1/systemone", "/custom/v1/systemone"])
   await run(
     [
       "tmux",
@@ -238,6 +249,8 @@ try {
     installed,
     settingsPersisted: true,
     companionLoaded: true,
+    customConnectionPersisted: true,
+    queuedRequestApproved: queued.data.id,
     permission: permission.data,
     modelCalls: calls,
     limitation: "Requires this fork's experimental APIs; public plugin SDK alone is insufficient.",

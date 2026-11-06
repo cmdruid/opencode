@@ -8,6 +8,12 @@ import { Options, review } from "./review.js"
 import { connections } from "./connections.js"
 import { settings, reviewOptions } from "./settings.js"
 
+const MissingModel = Schema.Struct({
+  _tag: Schema.Literal("Generate.ModelNotFoundError"),
+  providerID: Schema.String,
+  modelID: Schema.String,
+})
+
 export default Plugin.define({
   id: "opencode.permission-review",
   effect: Effect.fn(function* (ctx) {
@@ -161,6 +167,11 @@ export default Plugin.define({
             .reply({ sessionID: request.sessionID, requestID: request.id, decision: "once" })
             .pipe(Effect.orDie)
           yield* ctx.storage.set(`approval/${input.sessionID}/${request.id}`, approval)
+          // Older hosts can still use remembered approvals for future requests.
+          if (ctx.experimental.permission)
+            yield* ctx.experimental.permission.reviewPending({ sessionID: input.sessionID, action: request.action })
+          if (!ctx.experimental.permission)
+            yield* Effect.logWarning("Update OpenCode to recheck queued permissions after Allow Session")
           return approval
         }),
         approvals: Effect.fn(function* (input) {
@@ -222,10 +233,12 @@ export default Plugin.define({
         const chat = yield* fallback(event.request.sessionID, values)
         const model = yield* connection.model("classifier", values).pipe(Effect.orDie)
         const result = yield* review(ctx, event, { ...values, model, fallback: chat }, remembered).pipe(
-          Effect.catch(() =>
+          Effect.catch((error) =>
             Effect.succeed({
               decision: "escalate" as const,
-              reason: "Permission reviewer unavailable; please review the request.",
+              reason: Option.isSome(Schema.decodeUnknownOption(MissingModel)(error))
+                ? `Classifier model ${values.model.providerID}/${values.model.id} is unavailable; check Model and Connection in permission settings.`
+                : "Permission reviewer unavailable; please review the request.",
             }),
           ),
         )

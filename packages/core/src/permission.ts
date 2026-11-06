@@ -116,6 +116,7 @@ export interface Interface {
   readonly assertNotDenied: (input: AssertInput) => Effect.Effect<void, BlockedError | SessionErrors.NotFoundError>
   /** True only when the rules already allow the request; never asks the user. */
   readonly allows: (input: AssertInput) => Effect.Effect<boolean, SessionErrors.NotFoundError>
+  readonly reviewPending: (input: { sessionID: SessionSchema.ID; action: string }) => Effect.Effect<void>
   readonly reply: (input: ReplyInput) => Effect.Effect<void, NotFoundError>
   readonly get: (id: ID) => Effect.Effect<Request | undefined>
   readonly forSession: (sessionID: SessionSchema.ID) => Effect.Effect<ReadonlyArray<Request>>
@@ -140,6 +141,7 @@ const layer = Layer.effect(
     const saved = yield* PermissionSaved.Service
     const hooks = yield* PluginHooks.Service
     const pending = new Map<ID, Pending>()
+    const reviewing = new Set<ID>()
     let closed = false
 
     const close = Effect.gen(function* () {
@@ -395,6 +397,37 @@ const layer = Layer.effect(
       ),
     )
 
+    const reviewPending = Effect.fn("Permission.reviewPending")(
+      (input: { sessionID: SessionSchema.ID; action: string }) =>
+        Effect.forEach(
+          Array.from(pending.values()).filter(
+            (item) => item.request.sessionID === input.sessionID && item.request.action === input.action,
+          ),
+          (item) =>
+            Effect.gen(function* () {
+              const id = item.request.id
+              if (closed || reviewing.has(id) || pending.get(id) !== item) return
+              reviewing.add(id)
+              yield* Effect.gen(function* () {
+                const result = yield* review({ ...item.request, agent: item.agent }).pipe(
+                  Effect.catchTag("Session.NotFoundError", () => Effect.undefined),
+                )
+                if (result?.effect !== "allow") return
+                // The user can answer or cancel this request while its review is running.
+                yield* Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    if (closed || pending.get(id) !== item) return
+                    yield* reply({ requestID: id, reply: "once" }).pipe(
+                      Effect.catchTag("Permission.NotFoundError", () => Effect.void),
+                    )
+                  }),
+                )
+              }).pipe(Effect.ensuring(Effect.sync(() => reviewing.delete(id))))
+            }),
+          { concurrency: 4, discard: true },
+        ),
+    )
+
     const list = Effect.fn("Permission.list")(function* () {
       return Array.from(pending.values(), (item) => item.request)
     })
@@ -407,7 +440,7 @@ const layer = Layer.effect(
       return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
     })
 
-    return Service.of({ ask, assert, assertNotDenied, allows, reply, get, forSession, list, close })
+    return Service.of({ ask, assert, assertNotDenied, allows, reply, reviewPending, get, forSession, list, close })
   }),
 )
 

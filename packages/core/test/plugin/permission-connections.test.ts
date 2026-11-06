@@ -1,4 +1,7 @@
 import { expect } from "bun:test"
+import { Config } from "@opencode/core/config"
+import { ConfigProviderPlugin } from "@opencode/core/config/plugin/provider"
+import { Document, Info } from "@opencode/schema/config"
 import { Credential } from "@opencode/core/credential"
 import { Generate } from "@opencode/core/generate"
 import { Model } from "@opencode/core/model"
@@ -8,7 +11,7 @@ import { Contract } from "../../../plugins/permission-review/contract"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { Provider } from "@opencode/schema/provider"
-import { Effect, Exit } from "effect"
+import { Effect, Exit, Schema } from "effect"
 import { connections } from "../../../plugins/permission-review/connections"
 import { testEffect } from "../lib/effect"
 import { addUserTask, makePluginTestLayer } from "./fixture"
@@ -213,6 +216,102 @@ it.live("custom chat endpoint uses its stored key and keeps the configured model
       { path: "/v1/systemone", auth: null },
       { path: "/v1/chat/completions", auth: null },
     ])
+    yield* permission.close
+  }),
+)
+
+it.live("custom connections resolve models defined by the later configuration plugin", () =>
+  Effect.gen(function* () {
+    const calls: string[] = []
+    const server = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        Bun.serve({
+          port: 0,
+          async fetch(request) {
+            const body = await request.json()
+            calls.push(new URL(request.url).pathname)
+            expect(request.headers.get("authorization")).toBeNull()
+            if (calls.at(-1) === "/v1/systemone") {
+              expect(body).toMatchObject({ model: "decision" })
+              return Response.json({
+                model: "decision",
+                answers: {
+                  permission: {
+                    type: "choice",
+                    choice: "approve",
+                    confidence: 0.85,
+                    probabilities: { approve: 0.85, deny: 0.15, escalate: 0 },
+                  },
+                },
+              })
+            }
+            expect(body).toMatchObject({ model: "chat", reasoning_effort: "low", max_tokens: 1024 })
+            return new Response(
+              `data: ${JSON.stringify({ id: "chat_fixture", object: "chat.completion.chunk", created: 0, model: "chat", choices: [{ index: 0, delta: { content: '{"decision":"approve","reason":"Synthetic fixture"}' }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+              { headers: { "content-type": "text/event-stream" } },
+            )
+          },
+        }),
+      ),
+      (server) => Effect.promise(() => server.stop(true)),
+    )
+    const plugins = yield* Plugin.Service
+    const host = yield* PluginHost.make(plugins, "opencode.permission-review")
+    // Saved overrides must also work when loaded before config contributes the source models.
+    for (const role of ["classifier", "fallback"]) {
+      yield* host.storage.set(`connection/${role}`, {
+        url: `${server.url}v1`,
+        providerID: `permission-review-${role}-fixture`,
+        authenticated: false,
+      })
+    }
+    yield* reviewer.effect({ ...host, options: { ...options, minConfidence: 0.9, defaultMode: "auto" } })
+    yield* ConfigProviderPlugin.Plugin.effect(host).pipe(
+      Effect.provide(
+        Config.testLayer([
+          new Document({
+            type: "document",
+            info: Schema.decodeUnknownSync(Info)({
+              providers: {
+                "review-source": {
+                  package: "@opencode/ai/providers/openai-compatible",
+                  settings: { baseURL: "https://configured.invalid/v1", apiKey: false },
+                  models: {
+                    decision: { type: "decision", package: "@opencode/ai/providers/typesafe-ai/decisions" },
+                    chat: { variants: [{ id: "bounded", body: { reasoning_effort: "low", max_tokens: 1024 } }] },
+                  },
+                },
+              },
+            }),
+          }),
+        ]),
+      ),
+    )
+    const permission = yield* Permission.Service
+    const session = yield* host.session.create({
+      title: "Late config connection fixture",
+      permissions: [{ action: "*", resource: "*", effect: "ask" }],
+    })
+    yield* addUserTask(session.id, "Inspect this synthetic checkout")
+    const ask = () => permission.ask({ sessionID: session.id, action: "shell", resources: ["git status"] })
+    expect((yield* ask()).effect).toBe("allow")
+    expect(calls).toEqual(["/v1/systemone", "/v1/chat/completions"])
+    const rpc = host.rpc(Contract)
+    expect((yield* rpc.history({ sessionID: session.id }))[0]).toMatchObject({
+      classifier: { confidence: 0.85 },
+      fallback: { applied: true },
+      decision: "approve",
+    })
+    yield* host.provider.reload()
+    expect((yield* ask()).effect).toBe("allow")
+    expect(calls).toHaveLength(4)
+    // A removed source must not keep executing a cached alias or hide the lookup failure.
+    yield* host.model.transform((editor) => editor.remove("review-source", "decision"))
+    expect((yield* ask()).effect).toBe("ask")
+    expect(calls).toHaveLength(4)
+    expect((yield* rpc.history({ sessionID: session.id }))[0]?.reason).toContain(
+      "Classifier model review-source/decision is unavailable",
+    )
     yield* permission.close
   }),
 )

@@ -16,10 +16,10 @@ export const connections = Effect.fn(function* (
   const roles = (): ConnectionRole[] => ["classifier", ...(configured.value.fallback ? ["fallback" as const] : [])]
   const records = new Map<ConnectionRole, SavedConnection>()
   const integrations = new Map<string, ConnectionRole>()
+  const resolved = new Map<ConnectionRole, Model.Info & { package: string }>()
   const original = (role: ConnectionRole) =>
     role === "classifier" ? configured.value.model : configured.value.fallback!.model
-  const title = (role: ConnectionRole) =>
-    role === "classifier" ? "Primary permission reviewer" : "Permission chat fallback"
+  const title = (role: ConnectionRole) => (role === "classifier" ? "Permission classifier" : "Permission reviewer")
 
   yield* ctx.integration.transform((editor) => {
     integrations.forEach((role, id) => {
@@ -31,33 +31,17 @@ export const connections = Effect.fn(function* (
   })
   yield* ctx.provider.transform((editor) => {
     records.forEach((record, role) => {
-      const ref = original(role)
-      const source = editor.get(ref.providerID)
-      const model = source?.models.get(ref.id)
-      if (!source || !model) return
-      const id = Provider.ID.make(record.providerID)
+      const model = resolved.get(role)
+      if (!model) return
       editor.add({
         info: {
-          id,
+          id: Provider.ID.make(record.providerID),
           name: title(role),
           integrationID: Integration.ID.make(record.providerID),
           activation: record.authenticated ? "auto" : "enabled",
-          package: model.package ?? source.provider.package,
+          package: model.package,
         },
-        models: [
-          {
-            ...model,
-            providerID: id,
-            package: model.package ?? source.provider.package,
-            // Never carry the source provider's credentials or headers to a custom endpoint.
-            headers: {},
-            settings: { baseURL: record.url, ...(record.authenticated ? {} : { apiKey: false }) },
-            variants: model.variants.map((variant) => ({
-              ...Struct.omit(variant, ["settings", "headers"]),
-              headers: {},
-            })),
-          },
-        ],
+        models: [model],
       })
     })
   })
@@ -96,7 +80,31 @@ export const connections = Effect.fn(function* (
     yield* refresh(snapshot)
     const ref = original(role)
     const record = records.get(role)
-    return record ? Model.Ref.make({ ...ref, providerID: Provider.ID.make(record.providerID) }) : ref
+    if (!record) return ref
+    // Config contributes providers and model overrides after external transforms. Resolve
+    // the finished catalog here, then publish a credential-isolated custom endpoint.
+    const source = (yield* ctx.model.list({ types: ["decision", "chat"] })).data.find(
+      (model) => model.providerID === ref.providerID && model.id === ref.id,
+    )
+    const routed = source
+      ? {
+          ...source,
+          providerID: Provider.ID.make(record.providerID),
+          package: source.package ?? (yield* ctx.provider.get({ providerID: ref.providerID })).data.package,
+          headers: {},
+          settings: { baseURL: record.url, ...(record.authenticated ? {} : { apiKey: false }) },
+          variants: source.variants.map((variant) => ({
+            ...Struct.omit(variant, ["settings", "headers"]),
+            headers: {},
+          })),
+        }
+      : undefined
+    if (JSON.stringify(resolved.get(role)) !== JSON.stringify(routed)) {
+      if (routed) resolved.set(role, routed)
+      if (!routed) resolved.delete(role)
+      yield* ctx.provider.reload()
+    }
+    return Model.Ref.make({ ...ref, providerID: Provider.ID.make(record.providerID) })
   })
   const list = Effect.fn(function* () {
     yield* refresh()

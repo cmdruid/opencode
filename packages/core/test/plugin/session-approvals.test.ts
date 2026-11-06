@@ -20,6 +20,7 @@ const setup = Effect.gen(function* () {
     permissions: [{ action: "*", resource: "*", effect: "ask" }],
   })
   const prompts: string[] = []
+  const response = { decision: "escalate" }
   yield* reviewer.effect({
     ...host,
     options: { model: Model.Ref.parse("test/reviewer"), defaultMode: "manual" },
@@ -30,7 +31,12 @@ const setup = Effect.gen(function* () {
         text: (input) =>
           Effect.sync(() => {
             prompts.push(input.prompt)
-            return { text: JSON.stringify({ decision: "escalate", reason: "Fixture requires user review" }) }
+            return {
+              text: JSON.stringify({
+                decision: input.prompt.includes("keep-pending-fixture") ? "escalate" : response.decision,
+                reason: "Fixture review",
+              }),
+            }
           }),
       },
     },
@@ -42,7 +48,7 @@ const setup = Effect.gen(function* () {
     save: ["ssh *"],
     metadata: { command: "ssh node-a 'service-x --version'" },
   }
-  return { host, permission, session, request, prompts, client: host.rpc(Contract) }
+  return { host, permission, session, request, prompts, response, client: host.rpc(Contract) }
 })
 
 it.live("Allow Session records only the server's pending request and still reviews later requests", () =>
@@ -136,3 +142,42 @@ it.live("remembered examples stay session-local and configured denials still win
     yield* test.permission.close
   }),
 )
+
+for (const mode of ["auto", "shadow", "manual"] as const) {
+  it.live(`Allow Session rechecks queued requests and respects ${mode} automation`, () =>
+    Effect.gen(function* () {
+      const test = yield* setup
+      const first = yield* test.permission.ask(test.request)
+      const similar = yield* test.permission.ask(test.request)
+      const uncertain = yield* test.permission.ask({ ...test.request, resources: ["keep-pending-fixture"] })
+      const blocked = yield* test.permission.ask({ ...test.request, resources: ["blocked-fixture"] })
+      const differentAction = yield* test.permission.ask({ ...test.request, action: "edit" })
+      const other = yield* test.host.session.create({
+        title: "Other queue",
+        permissions: [{ action: "*", resource: "*", effect: "ask" }],
+      })
+      const foreign = yield* test.permission.ask({ ...test.request, sessionID: other.id })
+      yield* test.host.session.update({
+        sessionID: test.session.id,
+        permissions: [
+          { action: "*", resource: "*", effect: "ask" },
+          { action: "shell", resource: "blocked-fixture", effect: "deny" },
+        ],
+      })
+      yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reviewer", mode } })
+      test.response.decision = "approve"
+      yield* test.client.allowSession({ sessionID: test.session.id, requestID: first.id })
+      expect(yield* test.permission.get(first.id)).toBeUndefined()
+      expect(!!(yield* test.permission.get(similar.id))).toBe(mode !== "auto")
+      for (const request of [uncertain, blocked, differentAction, foreign])
+        expect(yield* test.permission.get(request.id)).toBeDefined()
+      expect(test.prompts).toHaveLength(mode === "manual" ? 0 : 2)
+      expect((yield* test.client.approvals({ sessionID: test.session.id })).map((entry) => entry.requestID)).toEqual([
+        first.id,
+      ])
+      const saved = yield* PermissionSaved.Service
+      expect(yield* saved.list()).toEqual([])
+      yield* test.permission.close
+    }),
+  )
+}

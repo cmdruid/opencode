@@ -2,7 +2,7 @@
 
 Experimental model-assisted permission review and session controls for OpenCode. A reviewer can approve one request, deny it with feedback, or leave it for a human. Chat models and decision classifiers use the same contract.
 
-**Publication is on hold.** Version `0.1.0-alpha.1` is an independently versioned local preparation artifact with `private: true`. npm installation is forthcoming; no registry availability or upstream compatibility is claimed.
+**Publication is on hold.** Version `0.1.0-alpha.2` is an independently versioned local preparation artifact with `private: true`. npm installation is forthcoming; no registry availability or upstream compatibility is claimed.
 
 ## Compatible host and local installation
 
@@ -58,9 +58,9 @@ Opening settings on the home screen creates no session. Session/activity section
 
 Effective server values resolve from built-in defaults, configuration-file options, then sparse saved overrides. Selected-row help identifies the source of saved model, threshold and policy values. **Use configured values** removes overrides; clearing instructions saves empty text, removing the reviewer saves disabled state, **All actions** overrides a configured subset, and an empty action list means **No actions**. Common action choices and custom exact action names are supported.
 
-Session scope/reviewer selections inherit from the nearest explicitly selected ancestor; otherwise they use the server default. Reviewer mode overrides belong only to the current session. Resetting scope/reviewer reveals the ancestor/default; resetting the reviewer leaves scope/reviewer alone. Changes refresh connected readers and apply to subsequent reviews; an assessment already running keeps its starting configuration. Existing pending prompts are not re-reviewed.
+Session scope/reviewer selections inherit from the nearest explicitly selected ancestor; otherwise they use the server default. Reviewer mode overrides belong only to the current session. Resetting scope/reviewer reveals the ancestor/default; resetting the reviewer leaves scope/reviewer alone. Changes refresh connected readers and apply to subsequent reviews; an assessment already running keeps its starting configuration. Allow Session also rechecks requests already pending for the same session and action. Current rules and reviewer modes still apply; only approvals settle requests, and other outcomes remain pending. This requires the fork host’s `experimental.permission.reviewPending` API.
 
-The plugin ID and storage namespace remain `opencode.permission-review`. Historical session selections, connection identities, remembered approvals and history remain readable. Superseded experimental settings RPCs and the former `/permissions-test`, `/permission-reviews`, and `/session-approvals` commands are removed. Use the single settings flow.
+The plugin ID and storage namespace remain `opencode.permission-review`. Historical session selections, connection identities, remembered approvals and history remain readable. Custom connections resolve the final configured model catalog, including late model definitions and variants. Superseded experimental settings RPCs and the former `/permissions-test`, `/permission-reviews`, and `/session-approvals` commands are removed. Use the single settings flow.
 
 ## Configuration-file options
 

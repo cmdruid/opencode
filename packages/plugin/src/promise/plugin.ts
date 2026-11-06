@@ -11,7 +11,7 @@ import type { EventDomain } from "./event.js"
 import type { IntegrationDomain } from "./integration.js"
 import type { MCPDomain } from "./mcp.js"
 import type { ModelDomain } from "./model.js"
-import type { PermissionDomain } from "./permission.js"
+import type { ExperimentalPermissionDomain, PermissionDomain } from "./permission.js"
 import type { ProviderDomain } from "./provider.js"
 import type { ReferenceDomain } from "./reference.js"
 import type { RpcDomain } from "./rpc.js"
@@ -34,6 +34,7 @@ export interface Context {
   readonly credential: Pick<CredentialApi, "activate">
   readonly event: EventDomain
   readonly experimental: {
+    readonly permission: ExperimentalPermissionDomain
     readonly terminal: Pick<OpenCodeClient["experimental"]["persistentPty"], "read">
     /** Stateless generation with a model and a prompt: no session, history or tools. */
     readonly generate: ExperimentalGenerateApi

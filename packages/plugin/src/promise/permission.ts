@@ -32,3 +32,12 @@ export type PermissionDomain = Pick<PermissionApi, "list" | "get" | "reply"> & {
    */
   readonly assert: (input: typeof AssertInput.Encoded) => Promise<void>
 }
+
+/** Experimental: re-evaluate queued requests after new authorization evidence. */
+export interface ExperimentalPermissionDomain {
+  /**
+   * Rechecks pending requests for this session and action against current rules and review hooks.
+   * Only approvals settle requests; every other outcome stays pending. No saved grants are created.
+   */
+  readonly reviewPending: (input: { sessionID: Session.ID; action: string }) => Promise<void>
+}

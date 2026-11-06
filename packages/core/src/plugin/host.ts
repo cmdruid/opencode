@@ -284,6 +284,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
       }) as Plugin.Context["event"]["subscribe"],
     },
     experimental: {
+      permission: { reviewPending: permission.reviewPending },
       terminal: {
         read: (input) => persistentPty.read(input.sessionID, input.lines),
       },
