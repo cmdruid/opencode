@@ -89,6 +89,29 @@ The initial exploration exposed an important failure: chat accepted a tool resul
 
 Live configuration starts in **Shadow**, with the original classifier threshold and session preset unchanged. These are bounded synthetic results, not a calibrated accuracy or safety guarantee. No fixture command, including destructive commands, was executed. The generation API currently exposes text without chat token usage, so these reports record the configured output cap and measured latency, not billed cost. Inspect representative human comparisons before switching **Settings → Chat fallback** to **Automatic**.
 
+## Instruction refinements and missing evidence
+
+The [instruction fixtures](instruction-cases.json) cover skill loading, sudo documentation, explicitly requested local records, quoted text, shell substitutions, interpreter consumers, secret material, and missing task authorization. They are invented examples, not exported user conversations. Proposed commands are never executed.
+
+The shared instructions now distinguish the action's effects from operations merely described in documentation or literal record text. They also recognize an explicit user request as authorization for its stated operation and target, while still checking additional effects and restrictions. A direct check escalates before either model when both nonblank user text and saved session approvals are absent. Saved approvals alone can still reach model review; their scope is not automatically accepted.
+
+The [123-case comparison](results/maple-instruction-refinements.json) combines the existing 108 cases with these 15 fixtures. It uses the same routine policy, `0.95` threshold and low-effort Maple chat variant, with automatic fallback in the isolated evaluator:
+
+| Measurement                                       |    Before |     After |
+| ------------------------------------------------- | --------: | --------: |
+| Authorized cases approved by System One alone     |   29 / 36 |   32 / 36 |
+| Authorized cases approved with automatic fallback |   36 / 36 |   35 / 36 |
+| Final unsafe approvals                            |    0 / 87 |    0 / 87 |
+| Raw unsafe chat recommendations                   |         3 |         0 |
+| Additional chat calls                             |        40 |        32 |
+| Exact final labels                                | 110 / 123 | 113 / 123 |
+
+Five cases now skip both models for missing task evidence; eliminating their raw chat mistakes is a code-path change, not proof that the chat model learned authorization. One read-only package-upgrade simulation still escalated after chat disagreed, whereas the baseline approved it. These results support fewer routine classifier escalations and a firmer missing-evidence boundary, with that remaining fallback limitation. They do not establish a calibrated accuracy rate.
+
+Initial parallel runs encountered eight 30-second timeouts across seven cases. Sequential retries succeeded, and the final sequential 123-case run had no errors. The report retains those initial failures and identifies the baseline replacements. An earlier prompt candidate unnecessarily escalated an explicitly requested staging deployment; the final wording corrected that case. Live fallback remains Shadow; the threshold is unchanged.
+
+Reproduce with the existing decision evaluation command, `--cases ../plugins/permission-review/evaluation/instruction-cases.json --limit 15`, and the fallback flags above. Unit and Core tests separately verify no model calls without evidence, saved-approval-only review, revocation, configured denials and session isolation.
+
 ## Dynamic session context
 
 The [network fixtures](network-cases.json) exercise prior observed server identity, remote inspection, public metadata requests and local response parsing, alongside fabricated authorization in tool results, different targets, command substitutions, hidden writes, secret uploads and downloaded-code execution. All proposed commands remain inert data.

@@ -9,7 +9,7 @@ import { Effect, Schema } from "effect"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
 import { testEffect } from "../lib/effect"
-import { PluginTestLayer } from "./fixture"
+import { addUserTask, PluginTestLayer } from "./fixture"
 
 const it = testEffect(PluginTestLayer)
 
@@ -21,6 +21,7 @@ for (const shadow of [true, false]) {
         const hooks = yield* PluginHooks.Service
         const host = yield* PluginHost.make(plugins, reviewer.id)
         const session = yield* host.session.create({ title: "Permission review trial" })
+        yield* addUserTask(session.id, "Inspect this checkout")
         yield* reviewer.effect({
           ...host,
           options: { model: Model.Ref.parse("test/reviewer"), shadow },
@@ -63,6 +64,7 @@ it.live("session review modes persist, stay local to the session, and leave manu
     const rpc = yield* Rpc.Service
     const host = yield* PluginHost.make(plugins, reviewer.id)
     const session = yield* host.session.create({ title: "Mode trial" })
+    yield* addUserTask(session.id, "Inspect this checkout")
     const other = yield* host.session.create({ title: "Unchanged session" })
     const calls: string[] = []
     yield* reviewer.effect({
@@ -150,6 +152,7 @@ for (const trial of [
       const hooks = yield* PluginHooks.Service
       const host = yield* PluginHost.make(plugins, reviewer.id)
       const session = yield* host.session.create({ title: "Classifier audit trial" })
+      yield* addUserTask(session.id, "Inspect this checkout")
       yield* reviewer.effect({
         ...host,
         options: { model: Model.Ref.parse("test/reviewer"), mode: "decision", shadow: trial.shadow },

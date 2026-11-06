@@ -12,7 +12,7 @@ import path from "node:path"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
 import { testEffect } from "../lib/effect"
-import { makePluginTestLayer } from "./fixture"
+import { addUserTask, makePluginTestLayer } from "./fixture"
 
 const it = testEffect(makePluginTestLayer(null))
 
@@ -24,6 +24,7 @@ const setup = Effect.gen(function* () {
     title: "Permission presets",
     permissions: [{ action: "*", resource: "*", effect: "allow" }],
   })
+  yield* addUserTask(session.id, "Inspect this checkout and run its tests")
   const calls: string[] = []
   yield* reviewer.effect({
     ...host,
