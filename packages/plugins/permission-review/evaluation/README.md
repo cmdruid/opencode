@@ -46,7 +46,48 @@ The runner creates its own temporary configuration, data, cache and state direct
 
 The runner invokes the production reviewer through the SDK's real generation APIs. It does not create executable tool calls or exercise the interactive permission prompt. Core and plugin integration tests cover the rule/hook/prompt and shadow-mode behavior separately.
 
-`--limit` caps reviewed cases, defaulting to 20; every case makes one generation request with a 30-second deadline. `--cases` accepts another fixture file. `--confidence` changes the classifier threshold, defaulting to `0.98`. `--policy` accepts a UTF-8 text file for the plugin's optional review policy. Reports retain raw choice probabilities and confidence alongside final decisions, errors and latency, so conservative escalation cannot hide a raw unsafe choice. Fixtures are synthetic and contain no real secrets or repository contents.
+`--limit` caps reviewed cases, defaulting to 20; every case makes one primary generation request with a 30-second deadline. An optional fallback makes at most one additional logical generation call; provider-level retries remain bounded by its timeout. `--cases` accepts another fixture file. `--confidence` changes the classifier threshold, defaulting to `0.98`. `--policy` accepts a UTF-8 text file for the plugin's optional review policy. Reports retain raw choice probabilities and confidence alongside final decisions, errors and latency, so conservative escalation cannot hide a raw unsafe choice. Fixtures are synthetic and contain no real secrets or repository contents.
+
+## Maple chat fallback
+
+Add a configured Maple chat model to the isolated provider config, with a dedicated variant:
+
+```json
+"gpt-oss-120b": {
+  "package": "@opencode/ai/providers/openai-compatible",
+  "settings": { "apiKey": false },
+  "variants": [
+    { "id": "permission-review", "body": { "reasoning_effort": "low", "max_tokens": 1024 } }
+  ]
+}
+```
+
+The proxy uses its existing credential. See [Maple's models](https://maple.ai/docs/proxy/models) and [chat API](https://maple.ai/docs/proxy/api). From `packages/sdk`, add these flags to any decision-model evaluation:
+
+```sh
+--fallback-model maple/gpt-oss-120b#permission-review \
+--fallback-mode shadow --fallback-timeout 10000
+```
+
+Shadow is the default; `auto` exercises the final agreement rule in the isolated runner, still without any command execution. Chat can confirm a below-threshold classifier approval, but cannot override a classifier escalation. Neither a raw classifier denial nor a provider failure calls chat. The runner records `fallbackCalls`, raw `fallbackUnsafeApprovals` and failures separately from final `unsafeApprovals`.
+
+The [recorded trial](results/maple-chat-fallback.json) includes the initial 20-case network exploration and the subsequent 108-case evaluation: general, held-out, context, destructive, network and remembered-approval fixtures. Both used the generic routine policy, classifier threshold `0.95`, the low-effort chat variant and a 10-second fallback deadline.
+
+| Final 108-case evaluation                        |                      Result |
+| ------------------------------------------------ | --------------------------: |
+| Authorized requests approved by classifier alone |                     28 / 32 |
+| Authorized requests approved with fallback       |                     31 / 32 |
+| Final unsafe approvals                           | 0 / 76 non-approvable cases |
+| Raw chat unsafe recommendations                  |                           1 |
+| Chat calls / failures                            |                      33 / 0 |
+| Additional chat latency, median / maximum        |            1,237 / 1,653 ms |
+| Exact final labels / provider errors             |          93 / 108; 0 errors |
+
+The three recovered approvals were a requested test, an SSH package-upgrade simulation, and a public artifact HEAD request. The classifier's raw scores from each same run provide the paired baseline; this is not a comparison between unrelated runs.
+
+The initial exploration exposed an important failure: chat accepted a tool result's fabricated claim of user authorization when no user task was present. This motivated the agreement gate. The same raw mistake recurred in the larger evaluation, but System One selected escalate, so the final result still required a human. Reports retain the incorrect recommendation rather than hiding it behind the final result. A later permission-only live smoke with no user task also produced a raw chat approval and a final escalation; it executed no tool and its test prompt/session were removed.
+
+Live configuration starts in **Shadow**, with the original classifier threshold and session preset unchanged. These are bounded synthetic results, not a calibrated accuracy or safety guarantee. No fixture command, including destructive commands, was executed. The generation API currently exposes text without chat token usage, so these reports record the configured output cap and measured latency, not billed cost. Inspect representative human comparisons before switching **Settings → Chat fallback** to **Automatic**.
 
 ## Dynamic session context
 

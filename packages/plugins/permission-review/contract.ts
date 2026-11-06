@@ -5,6 +5,23 @@ import { Schema } from "effect"
 export const ReviewMode = Schema.Literals(["manual", "shadow", "auto"])
 export type ReviewMode = typeof ReviewMode.Type
 
+export const FallbackMode = Schema.Literals(["off", "shadow", "auto"])
+export type FallbackMode = typeof FallbackMode.Type
+
+export const FallbackSettings = Schema.Struct({ model: Model.Ref, mode: FallbackMode, timeoutMs: Schema.Number })
+export type FallbackSettings = typeof FallbackSettings.Type
+
+export const FallbackAssessment = Schema.Struct({
+  ...ReviewResult.fields,
+  model: Model.Ref,
+  mode: Schema.Literals(["shadow", "auto"]),
+  trigger: Schema.Literals(["low-confidence", "uncertain"]),
+  status: Schema.Literals(["completed", "invalid", "timeout", "unavailable"]),
+  durationMs: Schema.Number,
+  applied: Schema.Boolean,
+})
+export type FallbackAssessment = typeof FallbackAssessment.Type
+
 // Retain configured/shadow for saved state and existing RPC clients, outside the main selector.
 export const Preset = Schema.Literals(["configured", "read-only", "workspace", "auto", "shadow", "full"])
 export type Preset = typeof Preset.Type
@@ -27,6 +44,7 @@ export type SessionApproval = typeof SessionApproval.Type
 
 export const Assessment = Schema.Struct({
   ...ReviewResult.fields,
+  fallback: FallbackAssessment.pipe(Schema.optional),
   requestID: Schema.String,
   sessionID: AssertInput.fields.sessionID,
   action: Schema.String,
@@ -37,9 +55,11 @@ export const Assessment = Schema.Struct({
   at: Schema.Number,
   durationMs: Schema.Number,
   classifier: Schema.Struct({
-    choice: Schema.String,
+    choice: Schema.Union([Schema.String, Schema.Boolean]),
     confidence: Schema.Number,
-    probabilities: Schema.Array(Schema.Struct({ value: Schema.String, probability: Schema.Number })),
+    probabilities: Schema.Array(
+      Schema.Struct({ value: Schema.Union([Schema.String, Schema.Boolean]), probability: Schema.Number }),
+    ),
     threshold: Schema.Number,
   }).pipe(Schema.optional),
 })
@@ -47,6 +67,7 @@ export type Assessment = typeof Assessment.Type
 
 export const State = Schema.Struct({
   ...Selection.fields,
+  fallback: FallbackSettings.pipe(Schema.optional),
   inheritedFrom: AssertInput.fields.sessionID.pipe(Schema.optional),
   model: Model.Ref,
   actions: Schema.Array(Schema.String).pipe(Schema.optional),
@@ -57,6 +78,10 @@ export type State = typeof State.Type
 export const Contract = Rpc.define({
   id: "opencode.permission-review",
   methods: {
+    setFallback: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, mode: FallbackMode })),
+      output: Schema.toStandardSchemaV1(State),
+    },
     allowSession: {
       input: Schema.toStandardSchemaV1(
         Schema.Struct({ sessionID: AssertInput.fields.sessionID, requestID: Schema.String }),
