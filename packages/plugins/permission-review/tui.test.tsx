@@ -4,6 +4,7 @@ import { createAppFixture } from "../../tui/test/fixture/app"
 import { directory, json } from "../../tui/test/fixture/tui-client"
 import { Schema } from "effect"
 import { Contract, SessionApproval } from "./contract"
+import { selectPermissionRow } from "./navigation.fixture"
 import { settingsFixture } from "./settings.fixture"
 
 async function openPermissions(setup: Awaited<ReturnType<typeof createAppFixture>>) {
@@ -13,7 +14,10 @@ async function openPermissions(setup: Awaited<ReturnType<typeof createAppFixture
   await setup.waitForFrame((frame) => frame.includes("Choose permissions"))
   setup.mockInput.pressEnter()
   await setup.waitForFrame(
-    (frame) => frame.includes("Type to filter") && setup.renderer.currentFocusedRenderable instanceof BoxRenderable,
+    (frame) =>
+      frame.includes("Read only") &&
+      frame.includes("Settings") &&
+      setup.renderer.currentFocusedRenderable instanceof BoxRenderable,
   )
 }
 
@@ -21,15 +25,11 @@ async function choose(setup: Awaited<ReturnType<typeof createAppFixture>>, text:
   await setup.waitForFrame(
     (frame) => !frame.includes("Loading…") && setup.renderer.currentFocusedRenderable instanceof BoxRenderable,
   )
-  setup.mockInput.pressKey("u", { ctrl: true })
-  await setup.mockInput.typeText(text)
-  await setup.waitForFrame((frame) => frame.includes(`Filter: ${text}`))
+  const row = await selectPermissionRow(setup, text)
   setup.mockInput.pressEnter()
   await setup.waitForFrame(
     (frame) =>
-      frame.includes(result) &&
-      (result === "Turn off auto accept" || !frame.includes(`Filter: ${text}`)) &&
-      !frame.includes("Loading…"),
+      frame.includes(result) && (row.isDestroyed || result === "Turn off auto accept") && !frame.includes("Loading…"),
   )
 }
 
@@ -78,7 +78,7 @@ test.each([false, true])("home settings stay session-free and preset respects au
   await setup.ready
   await openPermissions(setup)
   await choose(setup, "Settings", "Permission settings")
-  await choose(setup, "Primary reviewer", "All sessions on this server")
+  await choose(setup, "Classifier", "Confidence")
   expect(created).toEqual([])
   data.fixture.overrides = { minConfidence: 0.87 }
   setup.events.emit({
@@ -88,11 +88,11 @@ test.each([false, true])("home settings stay session-free and preset respects au
     location: { directory },
     data: {},
   })
-  await setup.waitForFrame((frame) => frame.includes("0.87 · server"))
+  await setup.waitForFrame((frame) => frame.includes("0.87"))
   setup.mockInput.pressEscape()
   await setup.waitForFrame((frame) => frame.includes("Permission settings"))
   setup.mockInput.pressEscape()
-  await setup.waitForFrame((frame) => frame.includes("new session"))
+  await setup.waitForFrame((frame) => frame.includes("Read only") && frame.includes("Settings"))
   await choose(setup, "Read only", autoaccept ? "Turn off auto accept" : "permissions: Read only")
   expect(created).toHaveLength(autoaccept ? 0 : 1)
   expect(changes).toHaveLength(autoaccept ? 0 : 1)

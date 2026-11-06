@@ -48,7 +48,7 @@ const installed = path.join(root, "node_modules/@cmdcode/opencode-auto-permissio
 assert.equal(await realpath(installed), installed)
 const manifest = await Bun.file(path.join(installed, "package.json")).json()
 assert.equal(manifest.name, "@cmdcode/opencode-auto-permissions")
-assert.equal(manifest.version, "0.1.0-alpha.0")
+assert.equal(manifest.version, (await Bun.file(new URL("../package.json", import.meta.url)).json()).version)
 assert.equal(manifest.private, true)
 assert.equal(manifest.devDependencies, undefined)
 assert.equal(manifest.scripts, undefined)
@@ -227,7 +227,7 @@ try {
   await run(["tmux", "-L", socket, "send-keys", "-t", "check", "-l", "Permissions"], env)
   await waitFrame("Choose permissions")
   await run(["tmux", "-L", socket, "send-keys", "-t", "check", "Enter"], env)
-  await Bun.write(path.join(root, "tui.txt"), await waitFrame("Type to filter"))
+  await Bun.write(path.join(root, "tui.txt"), await waitFrame("Read only"))
   const report = {
     tarball,
     sha256: new Bun.CryptoHasher("sha256").update(await Bun.file(tarball).arrayBuffer()).digest("hex"),

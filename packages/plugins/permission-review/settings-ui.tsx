@@ -1,6 +1,8 @@
 import type { Plugin } from "@opencode/plugin/tui"
 import { Model } from "@opencode/plugin/effect"
-import type { BoxRenderable, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core"
+import { TextAttributes, type BoxRenderable, type ScrollBoxRenderable, type TextareaRenderable } from "@opentui/core"
+import { SelectRow } from "../../tui/src/ui/select-row"
+import { useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createSignal, For, Show, untrack } from "solid-js"
 import type {
   Assessment,
@@ -14,8 +16,8 @@ import type {
   State,
 } from "./contract.js"
 
-export const reviewLabels = { manual: "Manual", shadow: "Shadow — suggest only; you decide", auto: "Approve for me" }
-export const fallbackLabels = { off: "Off", shadow: "Shadow — suggest only; you decide", auto: "Automatic" }
+export const reviewLabels = { manual: "Manual", shadow: "Shadow", auto: "Approve for me" }
+export const fallbackLabels = { off: "Off", shadow: "Shadow", auto: "Automatic" }
 export const presets = {
   "read-only": { title: "Read only", description: "Read files; ask for edits and shell" },
   workspace: { title: "Ask for approval", description: "Local edits; ask for shell and network" },
@@ -39,7 +41,7 @@ export interface SettingsActions {
   revoke(requestID: string): Promise<void>
 }
 
-type Row = { title: string; value?: string; run(): void | Promise<void> }
+type Row = { title: string; value?: string; detail?: string; current?: boolean; run(): void | Promise<void> }
 type Page =
   | {
       type: "menu"
@@ -48,7 +50,6 @@ type Page =
       rows(): Row[]
       selected: number
       scroll: number
-      query: string
     }
   | { type: "editor"; title: string; value: string; submit(value: string): void | Promise<void> }
   | { type: "detail"; title: string; text: string }
@@ -62,6 +63,8 @@ export function PermissionSettings(props: {
   onClose(): void
 }) {
   const theme = props.theme.surface("dialog")
+  const dimensions = useTerminalDimensions()
+  const width = () => Math.min(60, dimensions().width - 2)
   const [server, setServer] = createSignal<ServerSettings>()
   const [session, setSession] = createSignal<State>()
   const [busy, setBusy] = createSignal(true)
@@ -73,12 +76,10 @@ export function PermissionSettings(props: {
   const page = () => pages().at(-1)
   const rows = () => {
     const current = page()
-    return current?.type === "menu"
-      ? current.rows().filter((row) => row.title.toLowerCase().includes(current.query.toLowerCase()))
-      : []
+    return current?.type === "menu" ? current.rows() : []
   }
   const values = () => server()!.values
-  const value = (key: keyof Overrides, text: string) => `${text} · ${server()?.sources[key]}`
+  const source = (key: keyof Overrides) => `All sessions · ${server()?.sources[key]}`
   const back = () => {
     setError("")
     if (pages().length <= 1) return props.onClose()
@@ -104,7 +105,7 @@ export function PermissionSettings(props: {
     setPages((items) => [...items, next])
   }
   const menu = (title: string, scope: string | (() => string), entries: () => Row[]) =>
-    push({ type: "menu", title, scope, rows: entries, selected: 0, scroll: 0, query: "" })
+    push({ type: "menu", title, scope, rows: entries, selected: 0, scroll: 0 })
   const detail = (title: string, text: string) => push({ type: "detail", title, text })
   const edit = (title: string, initial: string, submit: (text: string) => void | Promise<void>) =>
     push({ type: "editor", title, value: initial, submit })
@@ -135,6 +136,7 @@ export function PermissionSettings(props: {
     menu(title, scope, () =>
       choices.map((item) => ({
         title: label(item),
+        detail: item === "shadow" ? "Suggest only; you decide whether to approve" : undefined,
         run: async () => {
           await submit(item)
           back()
@@ -147,53 +149,63 @@ export function PermissionSettings(props: {
   })
   const fallback = (input: Partial<NonNullable<Overrides["fallback"]>>) => {
     const current = values().fallback
-    if (!current) throw new Error("Choose a second-opinion model first")
+    if (!current) throw new Error("Choose a reviewer model first")
     return patch({ fallback: { ...current, ...input } })
   }
   const pickModel = async (role: ConnectionRole) => {
     const models = (await props.actions.models()).filter(
-      (item) => (item.type ?? "chat") === (role === "fallback" ? "chat" : values().mode),
+      (item) => (item.type ?? "chat") === (role === "classifier" ? "decision" : "chat"),
     )
-    menu("Choose model", "All sessions on this server", () =>
-      models.map((model) => ({
-        title: `${model.providerID}/${model.id}`,
-        run: () => {
-          const select = async (variant?: string) => {
-            const ref = Model.Ref.parse(`${model.providerID}/${model.id}${variant ? `#${variant}` : ""}`)
-            await patch(
-              role === "classifier"
-                ? { model: ref }
-                : { fallback: { mode: "shadow", timeoutMs: 10_000, ...values().fallback, model: ref } },
-            )
-          }
-          menu("Choose variant", "All sessions on this server", () => [
-            {
-              title: "Default",
-              run: async () => {
-                await select()
+    const providers = [...new Set(models.map((model) => model.providerID))]
+    const list = (providerID?: string) =>
+      menu("Choose model", role === "classifier" ? "Classifier models" : "Chat models", () =>
+        models
+          .filter((model) => !providerID || model.providerID === providerID)
+          .map((model) => ({
+            title: model.id,
+            value: providerID ? undefined : model.providerID,
+            run: async () => {
+              const select = async (variant?: string) => {
+                const ref = Model.Ref.parse(`${model.providerID}/${model.id}${variant ? `#${variant}` : ""}`)
+                await patch(
+                  role === "classifier"
+                    ? { mode: "decision", model: ref }
+                    : { fallback: { mode: "shadow", timeoutMs: 10_000, ...values().fallback, model: ref } },
+                )
                 back()
-                back()
-              },
+                if (providers.length > 1) back()
+              }
+              if (!model.variants.length) return select()
+              menu("Choose variant", model.id, () => [
+                {
+                  title: "Default",
+                  run: async () => {
+                    await select()
+                    back()
+                  },
+                },
+                ...model.variants.map((variant) => ({
+                  title: variant.id,
+                  run: async () => {
+                    await select(variant.id)
+                    back()
+                  },
+                })),
+              ])
             },
-            ...model.variants.map((variant) => ({
-              title: variant.id,
-              run: async () => {
-                await select(variant.id)
-                back()
-                back()
-              },
-            })),
-          ])
-        },
-      })),
+          })),
+      )
+    if (providers.length <= 1) return list()
+    menu("Choose provider", role === "classifier" ? "Classifier" : "Reviewer", () =>
+      providers.map((providerID) => ({ title: providerID, run: () => list(providerID) })),
     )
   }
   const connection = (role: ConnectionRole) => {
     const saved = server()!.connections.find((item) => item.role === role)
-    if (!saved) throw new Error("Choose a second-opinion model first")
+    if (!saved) throw new Error("Choose a reviewer model first")
     const draft = { url: saved.url ?? "", auth: saved.custom && saved.authenticated ? "keep" : "none", key: "" }
     menu(
-      role === "classifier" ? "Primary reviewer connection" : "Second opinion connection",
+      role === "classifier" ? "Classifier connection" : "Reviewer connection",
       "Draft · all sessions on this server",
       () => [
         {
@@ -260,108 +272,76 @@ export function PermissionSettings(props: {
       ],
     )
   }
-  const primary = () =>
-    menu("Primary reviewer", "All sessions on this server", () => [
+  const classifier = () =>
+    menu("Classifier", "Fast decision model · all sessions", () => [
       {
-        title: "Backend",
-        value: value("mode", values().mode === "decision" ? "Classifier" : "Chat"),
-        run: () =>
-          menu("Backend", "Select a matching model", () =>
-            (["chat", "decision"] as const).map((mode) => ({
-              title: mode === "decision" ? "Classifier" : "Chat",
-              run: async () => {
-                // Backend and model are saved together so an intermediate incompatible choice cannot affect reviews.
-                const models = (await props.actions.models()).filter((item) => (item.type ?? "chat") === mode)
-                menu("Choose model for backend", "All sessions on this server", () =>
-                  models.map((model) => ({
-                    title: `${model.providerID}/${model.id}`,
-                    run: async () => {
-                      await patch({ mode, model: Model.Ref.parse(`${model.providerID}/${model.id}`) })
-                      back()
-                      back()
-                    },
-                  })),
-                )
-              },
-            })),
-          ),
-      },
-      {
-        title: "Model and variant",
-        value: value("model", modelName(values().model)),
+        title: "Model",
+        value: values().mode === "decision" ? values().model.id : "Choose classifier",
+        detail: `${modelName(values().model)} · ${server()?.sources.model}`,
         run: () => pickModel("classifier"),
       },
       {
         title: "Connection",
-        value: server()!.connections.find((item) => item.role === "classifier")?.url ?? "Configured provider",
+        value: server()!.connections.find((item) => item.role === "classifier")?.custom ? "Custom" : "Provider default",
         run: () => connection("classifier"),
       },
-      ...(values().mode === "decision"
-        ? [
-            {
-              title: "Confidence threshold",
-              value: value("minConfidence", String(values().minConfidence)),
-              run: () =>
-                edit(
-                  "Confidence threshold (0–1, not a safety probability)",
-                  String(values().minConfidence),
-                  async (text) => {
-                    await patch({ minConfidence: number(text) })
-                    back()
-                  },
-                ),
-            },
-          ]
-        : []),
+      {
+        title: "Confidence",
+        value: String(values().minConfidence),
+        detail: `${source("minConfidence")} · below this threshold, consult the reviewer`,
+        run: () =>
+          edit("Confidence (0–1)", String(values().minConfidence), async (text) => {
+            await patch({ minConfidence: number(text) })
+            back()
+          }),
+      },
       reset(["model", "mode", "minConfidence"]),
     ])
-  const second = () =>
-    menu(
-      "Second opinion",
-      () =>
-        values().mode === "decision"
-          ? "All sessions on this server"
-          : "Inactive with a chat primary; saved setup is retained",
-      () => [
-        {
-          title: "Model and variant",
-          value: value("fallback", values().fallback ? modelName(values().fallback!.model) : "Not configured"),
-          run: () => pickModel("fallback"),
-        },
-        ...(values().fallback
-          ? [
-              {
-                title: "Connection",
-                value: server()!.connections.find((item) => item.role === "fallback")?.url ?? "Configured provider",
-                run: () => connection("fallback"),
-              },
-              {
-                title: "Default mode",
-                value: value("fallback", fallbackLabels[values().fallback!.mode]),
-                run: () =>
-                  choose(
-                    "Second opinion default",
-                    "All sessions on this server",
-                    ["off", "shadow", "auto"] as const,
-                    (item) => fallbackLabels[item],
-                    (mode) => fallback({ mode }),
-                  ),
-              },
-              {
-                title: "Timeout (ms)",
-                value: value("fallback", String(values().fallback!.timeoutMs)),
-                run: () =>
-                  edit("Second opinion timeout (100–15000 ms)", String(values().fallback!.timeoutMs), async (text) => {
-                    await fallback({ timeoutMs: number(text) })
-                    back()
-                  }),
-              },
-              { title: "Remove second opinion", run: () => patch({ fallback: null }) },
-            ]
-          : []),
-        reset(["fallback"]),
-      ],
-    )
+  const reviewer = () =>
+    menu("Reviewer", "Chat model · consulted when the classifier needs review", () => [
+      {
+        title: "Model",
+        value: values().fallback?.model.id ?? "Not configured",
+        detail: values().fallback
+          ? `${modelName(values().fallback!.model)} · ${server()?.sources.fallback}`
+          : "Choose a chat model",
+        run: () => pickModel("fallback"),
+      },
+      ...(values().fallback
+        ? [
+            {
+              title: "Connection",
+              value: server()!.connections.find((item) => item.role === "fallback")?.custom
+                ? "Custom"
+                : "Provider default",
+              run: () => connection("fallback"),
+            },
+            {
+              title: "Default mode",
+              value: fallbackLabels[values().fallback!.mode],
+              run: () =>
+                choose(
+                  "Reviewer mode",
+                  "All sessions on this server",
+                  ["off", "shadow", "auto"] as const,
+                  (item) => fallbackLabels[item],
+                  (mode) => fallback({ mode }),
+                ),
+            },
+            {
+              title: "Timeout (ms)",
+              value: String(values().fallback!.timeoutMs),
+              run: () =>
+                edit("Reviewer timeout (100–15000 ms)", String(values().fallback!.timeoutMs), async (text) => {
+                  await fallback({ timeoutMs: number(text) })
+                  back()
+                }),
+            },
+            { title: "Remove reviewer", run: () => patch({ fallback: null }) },
+          ]
+        : []),
+      reset(["fallback"]),
+    ])
   const actionCatalog = () => {
     const selected = new Set(
       values().actions ?? ["read", "edit", "shell", "webfetch", "websearch", "external_directory", "doom_loop"],
@@ -388,11 +368,11 @@ export function PermissionSettings(props: {
   const policy = () =>
     menu("Review policy", "All sessions on this server", () => [
       {
-        title: "Default reviewer mode",
-        value: value("defaultMode", reviewLabels[values().defaultMode]),
+        title: "Default automation",
+        value: reviewLabels[values().defaultMode],
         run: () =>
           choose(
-            "Default reviewer mode",
+            "Default automation",
             "All sessions on this server",
             ["manual", "shadow", "auto"] as const,
             (item) => reviewLabels[item],
@@ -401,10 +381,9 @@ export function PermissionSettings(props: {
       },
       {
         title: "Reviewed actions",
-        value: value(
-          "actions",
-          values().actions === null ? "All actions" : values().actions!.join(", ") || "No actions",
-        ),
+        value:
+          values().actions === null ? "All" : values().actions!.length ? `${values().actions!.length} actions` : "None",
+        detail: source("actions"),
         run: () =>
           menu("Reviewed actions", "Exact action names; unreviewed requests ask the human", () => [
             {
@@ -448,7 +427,8 @@ export function PermissionSettings(props: {
       },
       {
         title: "Additional instructions",
-        value: value("policy", values().policy || "None"),
+        value: values().policy ? "Custom" : "None",
+        detail: source("policy"),
         run: () =>
           edit("Additional policy instructions", values().policy, async (policy) => {
             await patch({ policy })
@@ -459,44 +439,49 @@ export function PermissionSettings(props: {
       reset(["defaultMode", "actions", "policy"]),
     ])
   const sessionMenu = () =>
-    menu("This session", session() ? "Current session" : "No session selected; choose a preset to create one", () =>
-      session()
-        ? [
-            {
-              title: "Reviewer mode",
-              value: `${reviewLabels[session()!.mode]} · ${session()!.modeSource}`,
-              run: () =>
-                choose(
-                  "Reviewer mode",
-                  "This session",
-                  ["manual", "shadow", "auto"] as const,
-                  (mode) => reviewLabels[mode],
-                  (mode) => change({ type: "reviewer", mode }),
-                ),
-            },
-            ...(session()!.fallback
-              ? [
-                  {
-                    title: "Second opinion mode",
-                    value: `${fallbackLabels[session()!.fallback!.mode]} · ${session()!.fallbackSource}`,
-                    run: () =>
-                      choose(
-                        "Second opinion mode",
-                        "This session; children use the server default",
-                        ["off", "shadow", "auto"] as const,
-                        (mode) => fallbackLabels[mode],
-                        (mode) => change({ type: "fallback", mode }),
-                      ),
-                  },
-                ]
-              : []),
-            {
-              title: "Restore inherited scope and reviewer",
-              run: () => change({ type: "reset", target: "selection" }),
-            },
-            { title: "Restore default second-opinion mode", run: () => change({ type: "reset", target: "fallback" }) },
-          ]
-        : [],
+    menu(
+      "This session",
+      () => (session() ? "Current session" : "No session selected; choose a preset to create one"),
+      () =>
+        session()
+          ? [
+              {
+                title: "Automation",
+                value: reviewLabels[session()!.mode],
+                detail: `This session · ${session()!.modeSource}`,
+                run: () =>
+                  choose(
+                    "Automation",
+                    "This session · Shadow suggests only; you decide",
+                    ["manual", "shadow", "auto"] as const,
+                    (mode) => reviewLabels[mode],
+                    (mode) => change({ type: "reviewer", mode }),
+                  ),
+              },
+              ...(session()!.fallback
+                ? [
+                    {
+                      title: "Reviewer mode",
+                      value: fallbackLabels[session()!.fallback!.mode],
+                      detail: `This session · ${session()!.fallbackSource}`,
+                      run: () =>
+                        choose(
+                          "Reviewer mode",
+                          "This session; children use the server default",
+                          ["off", "shadow", "auto"] as const,
+                          (mode) => fallbackLabels[mode],
+                          (mode) => change({ type: "fallback", mode }),
+                        ),
+                    },
+                  ]
+                : []),
+              {
+                title: "Reset permissions",
+                run: () => change({ type: "reset", target: "selection" }),
+              },
+              { title: "Reset reviewer mode", run: () => change({ type: "reset", target: "fallback" }) },
+            ]
+          : [],
     )
   const activity = () =>
     menu(
@@ -553,27 +538,39 @@ export function PermissionSettings(props: {
                 run: () =>
                   detail(
                     "Effective permissions",
-                    `${scopeName(session()!)}\nReviewer: ${reviewLabels[session()!.mode]} (${session()!.modeSource})\nModel: ${modelName(session()!.model)}\nInherited from: ${session()!.inheritedFrom ?? "none"}\nSecond opinion: ${session()!.fallback ? fallbackLabels[session()!.fallback!.mode] : "inactive"} (${session()!.fallbackSource})\n\nConfigured approval requirements and denials always apply. Presets can add requirements; Full access adds none. These are tool approval policies, not an OS sandbox.`,
+                    `${scopeName(session()!)}\nAutomation: ${reviewLabels[session()!.mode]} (${session()!.modeSource})\nModel: ${modelName(session()!.model)}\nInherited from: ${session()!.inheritedFrom ?? "none"}\nReviewer: ${session()!.fallback ? fallbackLabels[session()!.fallback!.mode] : "inactive"} (${session()!.fallbackSource})\n\nConfigured approval requirements and denials always apply. Presets can add requirements; Full access adds none. These are tool approval policies, not an OS sandbox.`,
                   ),
               },
             ]
           : [],
     )
   const settingsMenu = () =>
-    menu("Permission settings", "Choose a section; each setting shows its scope", () => [
+    menu("Permission settings", "Choose a setting", () => [
+      {
+        title: "Classifier",
+        value: values().mode === "decision" ? values().model.id : "Not configured",
+        detail: "Fast decision model",
+        run: classifier,
+      },
+      {
+        title: "Reviewer",
+        value: values().fallback?.model.id ?? "Not configured",
+        detail: "Chat model for uncertain classifier results",
+        run: reviewer,
+      },
       {
         title: "This session",
-        value: session() ? reviewLabels[session()!.mode] : "No session selected",
+        value: session() ? reviewLabels[session()!.mode] : "No session",
+        detail: "Session permissions and automation",
         run: sessionMenu,
       },
-      { title: "Primary reviewer", value: modelName(values().model), run: primary },
       {
-        title: "Second opinion",
-        value: values().fallback ? fallbackLabels[values().fallback!.mode] : "Not configured",
-        run: second,
+        title: "Review policy",
+        value: reviewLabels[values().defaultMode],
+        detail: "Defaults, reviewed actions and instructions",
+        run: policy,
       },
-      { title: "Review policy", value: reviewLabels[values().defaultMode], run: policy },
-      { title: "Activity", value: "History, remembered approvals and effective permissions", run: activity },
+      { title: "Activity", detail: "Review history, remembered approvals and effective permissions", run: activity },
     ])
   const root = () =>
     menu(
@@ -585,7 +582,8 @@ export function PermissionSettings(props: {
       () => [
         ...(["read-only", "workspace", "auto", "full"] as const).map((preset) => ({
           title: presets[preset].title,
-          value: `${matchesPreset(session(), preset) ? "Active · " : ""}${presets[preset].description}`,
+          current: matchesPreset(session(), preset),
+          detail: presets[preset].description,
           run: async () => {
             if (preset === "full")
               return menu("Enable full access?", "Configured approval rules still apply", () => [
@@ -602,7 +600,7 @@ export function PermissionSettings(props: {
             props.onClose()
           },
         })),
-        { title: "Settings", value: "Session, reviewers, policy and activity", run: settingsMenu },
+        { title: "Settings", detail: "Classifier, reviewer and permission options", run: settingsMenu },
       ],
     )
   createEffect(() => {
@@ -632,39 +630,63 @@ export function PermissionSettings(props: {
     target?.focus()
     scroll?.scrollTo(current?.type === "menu" ? current.scroll : 0)
   })
+  const select = (index: number) => {
+    const current = page()
+    if (current?.type !== "menu" || busy()) return
+    const next = Math.max(0, Math.min(rows().length - 1, index))
+    if (next === current.selected) return
+    setPages((items) => [...items.slice(0, -1), { ...current, selected: next, scroll: Math.max(0, next - 8) }])
+  }
   return (
-    <box padding={1} gap={1}>
-      <text fg={theme.text.base}>{page()?.title ?? "Permissions"}</text>
+    <box width="100%" maxWidth={60} paddingBottom={1}>
+      <box paddingLeft={3} paddingRight={3} marginBottom={1} flexDirection="row" justifyContent="space-between">
+        <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
+          {page()?.title ?? "Permissions"}
+        </text>
+        <text
+          fg={theme.text.muted}
+          onMouseUp={() => {
+            if (!busy()) back()
+          }}
+        >
+          esc
+        </text>
+      </box>
       <Show when={page()} keyed>
         {(current) =>
           current.type === "editor" ? (
-            <textarea
-              keyBindings={[{ name: "return", ctrl: true, action: "submit" }]}
-              initialValue={current.value}
-              height={6}
-              wrapMode="word"
-              textColor={theme.text.formfield.base}
-              focusedTextColor={theme.text.formfield.base}
-              ref={(item) => {
-                editor = item
-                queueMicrotask(() => {
-                  if (!item.isDestroyed) item.focus()
-                })
-              }}
-              onSubmit={() => run(() => current.submit(editor?.plainText ?? ""))}
-              onKeyDown={(event) => {
-                if (event.name === "escape") {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  if (!busy()) back()
-                }
-                if (event.ctrl && event.name === "s") {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  run(() => current.submit(editor?.plainText ?? ""))
-                }
-              }}
-            />
+            <box paddingLeft={3} paddingRight={3}>
+              <textarea
+                keyBindings={[{ name: "return", ctrl: true, action: "submit" }]}
+                initialValue={current.value}
+                height={current.title === "Additional policy instructions" ? 5 : 1}
+                wrapMode="word"
+                textColor={theme.text.formfield.base}
+                focusedTextColor={theme.text.formfield.base}
+                ref={(item) => {
+                  editor = item
+                  queueMicrotask(() => {
+                    if (!item.isDestroyed) item.focus()
+                  })
+                }}
+                onSubmit={() => run(() => current.submit(editor?.plainText ?? ""))}
+                onKeyDown={(event) => {
+                  if (event.name === "escape") {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (!busy()) back()
+                  }
+                  if (event.ctrl && event.name === "s") {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    run(() => current.submit(editor?.plainText ?? ""))
+                  }
+                }}
+              />
+              <text marginTop={1} fg={theme.text.muted}>
+                ctrl+s save · esc cancel
+              </text>
+            </box>
           ) : (
             <box
               focusable
@@ -675,40 +697,17 @@ export function PermissionSettings(props: {
                 })
               }}
               onKeyDown={(event) => {
-                if (event.eventType === "release") return
-                const character =
-                  !event.ctrl &&
-                  !event.meta &&
-                  (event.sequence.length === 1 && event.sequence >= " " ? event.sequence : "")
                 if (
-                  !character &&
-                  !["escape", "up", "down", "return", "pageup", "pagedown", "backspace", "home", "end"].includes(
-                    event.name,
-                  ) &&
-                  !(event.ctrl && event.name === "u")
+                  event.eventType === "release" ||
+                  !["escape", "up", "down", "return", "pageup", "pagedown", "home", "end"].includes(event.name)
                 )
                   return
                 event.preventDefault()
                 event.stopPropagation()
                 if (busy()) return
                 if (event.name === "escape") return back()
-                if (event.name === "pageup") return scroll?.scrollBy(-5)
-                if (event.name === "pagedown") return scroll?.scrollBy(5)
-                if (current.type !== "menu") return
-                if (character || event.name === "backspace" || (event.ctrl && event.name === "u")) {
-                  setPages((items) => [
-                    ...items.slice(0, -1),
-                    {
-                      ...current,
-                      selected: 0,
-                      scroll: 0,
-                      query: character
-                        ? current.query + character
-                        : event.name === "backspace"
-                          ? current.query.slice(0, -1)
-                          : "",
-                    },
-                  ])
+                if (current.type === "detail") {
+                  scroll?.scrollBy(event.name === "pageup" || event.name === "up" ? -5 : 5)
                   return
                 }
                 if (event.name === "return") {
@@ -716,86 +715,103 @@ export function PermissionSettings(props: {
                   if (row) run(row.run)
                   return
                 }
-                const next = Math.max(
-                  0,
-                  Math.min(
-                    rows().length - 1,
-                    event.name === "home"
-                      ? 0
-                      : event.name === "end"
-                        ? rows().length - 1
-                        : current.selected + (event.name === "up" ? -1 : 1),
-                  ),
+                select(
+                  event.name === "home"
+                    ? 0
+                    : event.name === "end"
+                      ? rows().length - 1
+                      : current.selected +
+                        (event.name === "pageup" ? -8 : event.name === "pagedown" ? 8 : event.name === "up" ? -1 : 1),
                 )
-                setPages((items) => [
-                  ...items.slice(0, -1),
-                  { ...current, selected: next, scroll: Math.max(0, next * 3 - 6) },
-                ])
               }}
             >
-              <Show when={current.type === "menu"}>
-                <text fg={theme.text.muted}>
-                  {current.type === "menu"
-                    ? typeof current.scope === "function"
-                      ? current.scope()
-                      : current.scope
-                    : ""}
-                </text>
-                <text fg={theme.text.formfield.base}>
-                  {current.type === "menu" && current.query
-                    ? `Filter: ${current.query} · Ctrl+U clear`
-                    : "Type to filter"}
-                </text>
-              </Show>
               <scrollbox
-                maxHeight={14}
+                height={
+                  current.type === "menu"
+                    ? Math.max(1, Math.min(rows().length, 12, dimensions().height - 10))
+                    : undefined
+                }
+                maxHeight={Math.max(3, Math.min(12, dimensions().height - 10))}
+                paddingLeft={1}
+                paddingRight={1}
+                scrollbarOptions={{ visible: false }}
                 ref={(item) => {
                   scroll = item
                 }}
               >
                 <Show when={current.type === "detail"}>
-                  <text fg={theme.text.base}>{current.type === "detail" ? current.text : ""}</text>
+                  <box paddingLeft={2} paddingRight={2}>
+                    <text fg={theme.text.base}>{current.type === "detail" ? current.text : ""}</text>
+                  </box>
                 </Show>
                 <Show when={current.type === "menu"}>
-                  <Show when={rows().length} fallback={<text fg={theme.text.muted}>No entries.</text>}>
+                  <Show
+                    when={rows().length}
+                    fallback={
+                      <box paddingLeft={2}>
+                        <text fg={theme.text.muted}>No entries.</text>
+                      </box>
+                    }
+                  >
                     <For each={rows()}>
                       {(row, index) => (
-                        <box paddingBottom={1} onMouseDown={() => run(row.run)}>
-                          <text
-                            fg={
-                              current.type === "menu" && index() === current.selected
-                                ? theme.text.formfield.selected
-                                : theme.text.formfield.base
-                            }
-                          >
-                            {current.type === "menu" && index() === current.selected ? "› " : "  "}
-                            {row.title}
-                          </text>
-                          <Show when={row.value}>
-                            <text fg={theme.text.muted}>{row.value}</text>
-                          </Show>
+                        <box
+                          id={`permission-row:${row.title}`}
+                          height={1}
+                          onMouseMove={() => select(index())}
+                          onMouseDown={() => select(index())}
+                          onMouseUp={() => run(row.run)}
+                        >
+                          <SelectRow
+                            theme={theme}
+                            inset={4}
+                            title={row.title}
+                            active={current.type === "menu" && index() === current.selected}
+                            current={row.current ?? false}
+                            titleWidth={Math.max(
+                              10,
+                              width() - 12 - (row.value ? Math.min(22, row.value.length, Math.floor(width() / 3)) : 0),
+                            )}
+                            footer={row.value ? shorten(row.value, Math.min(22, Math.floor(width() / 3))) : undefined}
+                          />
                         </box>
                       )}
                     </For>
                   </Show>
                 </Show>
               </scrollbox>
+              <Show when={current.type === "menu"}>
+                <box paddingLeft={3} paddingRight={3} marginTop={1}>
+                  <text maxHeight={2} fg={theme.text.muted}>
+                    {rows()[current.type === "menu" ? current.selected : 0]?.detail ??
+                      (current.type === "menu"
+                        ? typeof current.scope === "function"
+                          ? current.scope()
+                          : current.scope
+                        : "")}
+                  </text>
+                </box>
+              </Show>
             </box>
           )
         }
       </Show>
       <Show when={error()}>
-        <text fg={theme.text.feedback.error.base}>{error()}</text>
+        <box paddingLeft={3} paddingRight={3} marginTop={1}>
+          <text fg={theme.text.feedback.error.base}>{error()}</text>
+        </box>
       </Show>
-      <text fg={theme.text.action.primary.base}>
-        {busy()
-          ? "Loading…"
-          : page()?.type === "editor"
-            ? "Ctrl+S save · Esc cancel"
-            : "↑↓ navigate · Enter open · Esc back · PgUp/PgDn scroll"}
-      </text>
+      <Show when={busy()}>
+        <box paddingLeft={3}>
+          <text fg={theme.text.muted}>Loading…</text>
+        </box>
+      </Show>
     </box>
   )
+}
+
+function shorten(value: string, length: number) {
+  return value.length > length ? value.slice(0, length - 1) + "…" : value
 }
 
 function number(value: string) {
@@ -838,7 +854,7 @@ export function describe(entry: Assessment) {
       : []),
     ...(entry.fallback
       ? [
-          `Second opinion: ${modelName(entry.fallback.model)} · ${entry.fallback.mode}`,
+          `Reviewer: ${modelName(entry.fallback.model)} · ${entry.fallback.mode}`,
           `${entry.fallback.trigger} · ${entry.fallback.status} · ${entry.fallback.durationMs} ms`,
           `${entry.fallback.decision}: ${entry.fallback.reason}`,
           entry.fallback.applied ? "Used in reviewer decision" : "Did not change reviewer decision",

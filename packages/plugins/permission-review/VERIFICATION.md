@@ -78,3 +78,21 @@ Before editing runtime files, the existing installed source plugin was copied to
 The old `.workstream/permission-review` compatibility symlink remains, but the npm artifact does not depend on it. The helper's hardcoded `stream/` branch prefix conflicts with this repository's branch naming instructions, so the workstream checkpoint is saved directly under the bounded workstream lock. The separate upstream hook PR remains untouched.
 
 Future release work must explicitly authorize publishing, verify registry ownership/name availability, review host compatibility and then remove `private: true`. Host release version rewriting excludes both the package manifest and its lockfile record; the host's package collection does not include this plugin.
+
+## Compact menu revision — 2026-11-06
+
+Version `0.1.0-alpha.1` replaces the large, filtered settings view with compact native selection rows, a medium dialog, right-aligned values and selected-row help. The host's selection row is shared with the bundled companion; existing host dialogs retain their behavior. Classifier selection offers only decision models and writes `mode: "decision"`; Reviewer selection offers only chat models. Single-provider and variant-free selections skip unnecessary screens. Existing configuration-file chat mode remains readable for compatibility; no permission evaluation or saved-setting migration changed.
+
+Validation on the final source:
+
+- Full plugin suite: 39 pass, 272 assertions, 3.88 s.
+- Changed component and whole-app suites repeated ten times: 100 pass, 850 assertions, 15.10 s. After the final alignment and mouse/long-list test addition, component suite repeated ten times: 80 pass, 700 assertions, 2.30 s.
+- Native selection suite repeated ten times concurrently: 350 pass, 490 assertions, 25.34 s, covering both native design modes.
+- Official plugin and TUI TypeScript checks pass. Root `bun run check`: 36/36 tasks pass.
+- Production story inspected through `dev:live` at 44×36 and 112×36: `/tmp/perm-compact-preview-bCUuuV`. Service discovery used the normal profile while terminal state stayed isolated.
+- Exact final tarball passed the complete isolated package check against the already installed binary, `2.2.5-cmdruid.c72416a6ad`. Report: `/tmp/permission-package-check-ly3b7m/verification.json`. Includes settings persistence across restart, local fixture classifier review after explicit Allow Session evidence, and the bundled companion rendering.
+
+Artifact: `artifacts/cmdcode-opencode-auto-permissions-0.1.0-alpha.1.tgz`.
+SHA256: `8528586e158d2f0b1e146e2e6051db9087e7e9eec8c3bbc049d5fdfbc41c872e`.
+
+Installed the exact artifact under `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.1` and changed only the package path in the existing global configuration. Verified all eight existing session permission selections and the complete effective server settings were preserved. Backup: `~/.opencode/backups/before-auto-permissions-2026-11-06T23-01-50-996Z`. The previous preview remains available. No binary replacement, background-server restart, remote push or npm publication.

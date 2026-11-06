@@ -18,6 +18,7 @@ import {
   useDialog,
   type DialogContext,
 } from "./dialog"
+import { SelectRow } from "./select-row"
 import { Locale } from "../util/locale"
 import { getScrollAcceleration } from "../util/scroll"
 import { useConfig, useCursorStyle, useNewDesigns } from "../config"
@@ -906,79 +907,7 @@ function DialogSelectRow(props: {
 }) {
   const theme = useTheme().surface("dialog")
   const newDesigns = useNewDesigns()
-  const text = createMemo(() => {
-    if (props.active) return props.activeColor ?? theme.text.action.primary.focused
-    if (props.current && !newDesigns()) return theme.text.formfield.selected
-    return theme.text.base
-  })
-  // Secondary text (description and footer).
-  const secondary = () => {
-    if (!newDesigns()) return props.active ? text() : theme.text.muted
-    return props.active ? theme.text.action.secondary.focused : theme.text.muted
-  }
-
-  const row = () => (
-    // A marker or gutter takes its cell plus the row gap out of the left padding,
-    // so titles line up with unmarked rows: scroll pad (1) + marker (1) + gap (1).
-    <box
-      flexDirection="row"
-      flexGrow={newDesigns() ? 1 : undefined}
-      paddingLeft={props.current || props.gutter ? DIALOG_LIST_INSET - 3 : DIALOG_LIST_INSET - 1}
-      paddingRight={DIALOG_LIST_INSET - (newDesigns() ? 0 : 1)}
-      gap={1}
-      backgroundColor={
-        props.active ? (props.activeBackground ?? theme.background.action.primary.focused) : RGBA.fromInts(0, 0, 0, 0)
-      }
-    >
-      <Show when={!props.current && props.margin}>
-        <box position="absolute" left={DIALOG_LIST_INSET - 3} flexShrink={0}>
-          {props.margin}
-        </box>
-      </Show>
-      <Show when={props.current && !props.gutter}>
-        <text flexShrink={0} fg={newDesigns() ? theme.text.formfield.selected : text()}>
-          {newDesigns() ? "▪" : "●"}
-        </text>
-      </Show>
-      <Show when={props.gutter}>
-        <box flexShrink={0}>{props.gutter?.(text())}</box>
-      </Show>
-      <text
-        flexGrow={1}
-        fg={text()}
-        attributes={props.active && !newDesigns() ? TextAttributes.BOLD : undefined}
-        overflow="hidden"
-        wrapMode="none"
-        paddingLeft={3}
-      >
-        {props.titleView ??
-          (props.truncateTitle === false
-            ? props.title
-            : props.truncateTitle === "left"
-              ? Locale.truncateLeft(props.title, props.titleWidth ?? 61)
-              : Locale.truncate(props.title, props.titleWidth ?? 61))}
-        <Show when={props.description}>
-          <span style={{ fg: secondary() }}>{" " + props.description}</span>
-        </Show>
-      </text>
-      <Show when={props.footer}>
-        <box flexShrink={0} marginRight={props.footerOverhang ? -props.footerOverhang : undefined}>
-          <text fg={props.active || !props.footerColor ? secondary() : props.footerColor}>{props.footer}</text>
-        </box>
-      </Show>
-    </box>
-  )
-
-  return (
-    <Show when={newDesigns()} fallback={row()}>
-      <box flexDirection="row">
-        <text width={1} flexShrink={0} fg={theme.text.formfield.focused}>
-          {props.active ? "┃" : " "}
-        </text>
-        {row()}
-      </box>
-    </Show>
-  )
+  return <SelectRow {...props} theme={theme} newDesigns={newDesigns()} inset={DIALOG_LIST_INSET} />
 }
 
 function DialogSelectDetails(props: { details?: string[]; width: number }) {

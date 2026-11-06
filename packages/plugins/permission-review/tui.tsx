@@ -105,7 +105,7 @@ export default Plugin.define({
                 }}
               />
             ))
-            context.ui.dialog.set({ size: "large", centered: true })
+            context.ui.dialog.set({ size: "medium" })
           },
         },
       ],

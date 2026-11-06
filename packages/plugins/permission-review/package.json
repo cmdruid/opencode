@@ -1,6 +1,6 @@
 {
   "name": "@cmdcode/opencode-auto-permissions",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Experimental model-assisted permission review and session controls for OpenCode",
   "type": "module",
   "license": "MIT",
@@ -31,13 +31,17 @@
     "@opencode/plugin": "^2.2.5",
     "effect": "^4.1.0",
     "solid-js": ">=1.9.0",
-    "@opentui/solid": ">=0.8.1"
+    "@opentui/solid": ">=0.8.1",
+    "@opentui/core": ">=0.8.1"
   },
   "peerDependenciesMeta": {
     "solid-js": {
       "optional": true
     },
     "@opentui/solid": {
+      "optional": true
+    },
+    "@opentui/core": {
       "optional": true
     }
   },
