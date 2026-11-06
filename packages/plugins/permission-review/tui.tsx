@@ -1,6 +1,14 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, onCleanup, Show } from "solid-js"
-import { Contract, type Assessment, type FallbackMode, type Preset, type ReviewMode, type State } from "./contract.js"
+import {
+  Contract,
+  type Assessment,
+  type ConnectionRole,
+  type FallbackMode,
+  type Preset,
+  type ReviewMode,
+  type State,
+} from "./contract.js"
 
 const labels = { manual: "Manual", shadow: "Shadow", auto: "Approve for me" } satisfies Record<ReviewMode, string>
 const fallbackLabels = { off: "Off", shadow: "Shadow", auto: "Automatic" } satisfies Record<FallbackMode, string>
@@ -178,6 +186,62 @@ export default Plugin.define({
       context.ui.toast.show({ message: `Chat fallback: ${fallbackLabels[mode]}`, variant: "info" })
     }
 
+    async function showConnection(session: NonNullable<ReturnType<typeof current>>, role: ConnectionRole) {
+      const entries = await rpc.connections({}, { location: session.location })
+      const entry = entries.find((entry) => entry.role === role)
+      const title = role === "classifier" ? "Classifier connection" : "Chat fallback connection"
+      if (!entry) {
+        await context.ui.dialog.alert({ title, message: "Configure the reviewer's fallback model first." })
+        return
+      }
+      const action = await context.ui.dialog.select({
+        title: `${title} — all sessions`,
+        options: [
+          { value: "edit", title: "Edit connection", description: entry.url ?? "Use configured provider endpoint" },
+          {
+            value: "reset",
+            title: "Use configured provider",
+            description: `${entry.model.providerID}/${entry.model.id}`,
+          },
+        ],
+      })
+      if (!action) return
+      if (action === "reset") {
+        await rpc.setConnection({ role }, { location: session.location })
+        context.ui.toast.show({ message: `${title}: configured provider restored`, variant: "info" })
+        return
+      }
+      const url = await context.ui.dialog.prompt({
+        title: `${title} — base URL`,
+        description: "Applies to all sessions on this server. Include /v1 when required by the provider.",
+        value: entry.url,
+        placeholder: "http://127.0.0.1:28443/v1",
+      })
+      if (url === undefined) return
+      const keep = entry.custom && entry.authenticated && url.trim().replace(/\/+$/, "") === entry.url
+      const auth = await context.ui.dialog.select({
+        title: `${title} — authentication`,
+        current: keep ? "keep" : "none",
+        options: [
+          ...(keep ? [{ value: "keep", title: "Keep saved API key" }] : []),
+          { value: "none", title: "No API key", description: "For a local proxy or an unauthenticated endpoint" },
+          { value: "key", title: "Set API key", description: "Save in OpenCode's credential store" },
+        ],
+      })
+      if (!auth) return
+      const key =
+        auth === "key"
+          ? await context.ui.dialog.prompt({ title: `${title} — API key`, placeholder: "API key" })
+          : undefined
+      if (auth === "key" && key === undefined) return
+      if (auth === "key" && !key?.trim()) throw new Error("Enter an API key or select No API key")
+      await rpc.setConnection(
+        { role, url, ...(auth === "keep" ? {} : { apiKey: key ?? "" }) },
+        { location: session.location },
+      )
+      context.ui.toast.show({ message: `${title} saved for all sessions`, variant: "info" })
+    }
+
     const showDetails = (state: State) =>
       context.ui.dialog.alert({
         title: "Active permissions",
@@ -241,10 +305,20 @@ export default Plugin.define({
               if (!preset) return
               if (preset === "settings") {
                 const setting = await context.ui.dialog.select({
-                  title: "Permission settings — this session",
+                  title: "Permission settings",
                   options: [
                     { value: "mode", title: "Reviewer mode", description: "Manual, Shadow or Approve for me" },
                     { value: "fallback", title: "Chat fallback", description: "Second opinion for uncertain requests" },
+                    {
+                      value: "classifier-connection",
+                      title: "Classifier connection",
+                      description: "Endpoint and API key · all sessions",
+                    },
+                    {
+                      value: "fallback-connection",
+                      title: "Chat fallback connection",
+                      description: "Endpoint and API key · all sessions",
+                    },
                     {
                       value: "approvals",
                       title: "Session approvals",
@@ -264,6 +338,8 @@ export default Plugin.define({
                 })
                 if (setting === "mode") await showReviewer(session)
                 if (setting === "fallback") await showFallback(session)
+                if (setting === "classifier-connection") await showConnection(session, "classifier")
+                if (setting === "fallback-connection") await showConnection(session, "fallback")
                 if (setting === "approvals") await showApprovals(session)
                 if (setting === "history") await showHistory(session)
                 if (setting === "details") await showDetails(state)

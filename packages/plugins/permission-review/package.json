@@ -12,6 +12,7 @@
   "files": [
     "index.ts",
     "review.ts",
+    "connections.ts",
     "contract.ts",
     "tui.tsx",
     "README.md"

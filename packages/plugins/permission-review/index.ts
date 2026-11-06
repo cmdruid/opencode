@@ -5,11 +5,13 @@ import path from "node:path"
 import type { AssertInput } from "@opencode/plugin/permission"
 import { Assessment, Contract, FallbackMode, ReviewMode, Selection, SessionApproval } from "./contract.js"
 import { Options, review } from "./review.js"
+import { connections } from "./connections.js"
 
 export default Plugin.define({
   id: "opencode.permission-review",
   effect: Effect.fn(function* (ctx) {
     const options = yield* Schema.decodeUnknownEffect(Options)(ctx.options).pipe(Effect.orDie)
+    const connection = yield* connections(ctx, options)
     const approvals = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
       const entries: SessionApproval[] = []
       let after: string | undefined
@@ -51,7 +53,7 @@ export default Plugin.define({
       if (!options.fallback || options.mode !== "decision") return undefined
       const value = yield* ctx.storage.get(`fallback/${sessionID}`)
       return {
-        model: options.fallback.model,
+        model: yield* connection.model("fallback").pipe(Effect.orDie),
         mode:
           value === undefined
             ? (options.fallback.mode ?? "shadow")
@@ -63,13 +65,15 @@ export default Plugin.define({
       const chat = yield* fallback(sessionID)
       return {
         ...(yield* selection(sessionID)),
-        model: options.model,
+        model: yield* connection.model("classifier").pipe(Effect.orDie),
         ...(options.actions ? { actions: options.actions } : {}),
         ...(chat ? { fallback: chat } : {}),
       }
     })
     const rpc: RpcRegistration<typeof Contract> = yield* ctx.rpc
       .register(Contract, {
+        connections: () => connection.list().pipe(Effect.orDie),
+        setConnection: (input) => connection.set(input).pipe(Effect.orDie),
         setFallback: Effect.fn(function* (input) {
           yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
           if (!options.fallback || options.mode !== "decision")
@@ -197,7 +201,8 @@ export default Plugin.define({
           .filter((entry) => entry.action === event.request.action)
           .slice(0, 20)
         const chat = yield* fallback(event.request.sessionID)
-        const result = yield* review(ctx, event, { ...options, fallback: chat }, remembered).pipe(
+        const model = yield* connection.model("classifier").pipe(Effect.orDie)
+        const result = yield* review(ctx, event, { ...options, model, fallback: chat }, remembered).pipe(
           Effect.catch(() =>
             Effect.succeed({
               decision: "escalate" as const,
@@ -211,7 +216,7 @@ export default Plugin.define({
           sessionID: event.request.sessionID,
           action: event.request.action,
           resources: event.request.resources,
-          model: { providerID: options.model.providerID, id: options.model.id },
+          model: { providerID: model.providerID, id: model.id },
           mode: options.mode ?? "chat",
           shadow: selected === "shadow",
           at: completed,
