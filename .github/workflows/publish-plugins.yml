@@ -1,0 +1,114 @@
+name: Publish cmdcode plugins
+
+on:
+  push:
+    tags:
+      - "opencode-safe-sudo-v*"
+  # Manual runs only build/test/upload; they never publish.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-plugins-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'cmdruid/opencode'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      archive: ${{ steps.pack.outputs.archive }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+      dist_tag: ${{ steps.package.outputs.dist_tag }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Validate package and release ref
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/custom
+          bun -e '
+            import { valid } from "semver"
+            const pkg = await Bun.file("packages/plugins/sudo/package.json").json()
+            if (pkg.name !== "@cmdcode/opencode-safe-sudo" || !valid(pkg.version)) throw new Error("Invalid release package")
+            if (process.env.GITHUB_EVENT_NAME === "push" && process.env.GITHUB_REF !== `refs/tags/opencode-safe-sudo-v${pkg.version}`) throw new Error("Tag must match package version")
+            if (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" && process.env.GITHUB_REF !== "refs/heads/custom") throw new Error("Select custom for a manual build")
+            await Bun.write(process.env.GITHUB_OUTPUT, `dist_tag=${pkg.version.includes("-") ? "next" : "latest"}\n`)
+          '
+      - name: Check repository and plugin types
+        run: |
+          bun run check
+          bun run --cwd packages/plugins/sudo typecheck:tsc
+      - name: Build release archive
+        id: pack
+        working-directory: packages/plugins/sudo
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plugin-release"
+          bun pm pack --destination "$RUNNER_TEMP/plugin-release"
+          archive="cmdcode-opencode-safe-sudo-$(node -p 'require("./package.json").version').tgz"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$RUNNER_TEMP/plugin-release/$archive" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Test the exact release archive
+        working-directory: packages/plugins/sudo
+        env:
+          OPENCODE_SUDO_TARBALL: ${{ runner.temp }}/plugin-release/${{ steps.pack.outputs.archive }}
+        run: bun test --timeout 30000
+      - name: Install and load outside the workspace
+        env:
+          ARCHIVE: ${{ steps.pack.outputs.archive }}
+        run: bun packages/plugins/sudo/script/smoke-install.ts "$RUNNER_TEMP/plugin-release/$ARCHIVE"
+      - name: Check npm publication contents without publishing
+        env:
+          ARCHIVE: ${{ steps.pack.outputs.archive }}
+        run: npm publish "$RUNNER_TEMP/plugin-release/$ARCHIVE" --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cmdcode-plugin-release
+          path: ${{ runner.temp }}/plugin-release/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: github.repository == 'cmdruid/opencode' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/opencode-safe-sudo-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cmdcode-plugin-release
+          path: ${{ runner.temp }}/plugin-release
+      - name: Publish verified archive using npm trusted publishing
+        env:
+          ARCHIVE: ${{ needs.build.outputs.archive }}
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+          DIST_TAG: ${{ needs.build.outputs.dist_tag }}
+        working-directory: ${{ runner.temp }}/plugin-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$ARCHIVE" | sha256sum --check --strict
+          npm publish "$ARCHIVE" --ignore-scripts --access public --tag "$DIST_TAG" --registry=https://registry.npmjs.org/

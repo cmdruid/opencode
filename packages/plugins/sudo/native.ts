@@ -1,7 +1,7 @@
 import type { CliRenderer } from "@opentui/core"
 import type { Plugin } from "@opencode/plugin/tui"
 import { spawn } from "node:child_process"
-import { lstat } from "node:fs/promises"
+import { chmod, lstat } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
 import type { Request } from "./rpc"
@@ -24,8 +24,15 @@ export async function requireBundledHelper(directory = new URL("./native/bin/", 
     throw new Error("This sudo plugin release supports Linux x64 terminals.")
   const helper = fileURLToPath(new URL("linux-x64/opencode-sudo-tty", directory))
   const info = await lstat(helper)
-  if (!info.isFile() || (info.mode & 0o6022) !== 0 || (info.mode & 0o111) === 0)
+  if (!info.isFile() || (info.mode & 0o6002) !== 0 || (info.mode & 0o111) === 0)
     throw new Error("Invalid bundled sudo helper. Reinstall the plugin.")
+  // npm/Bun may apply a group-writable umask when unpacking an otherwise 0755 asset.
+  // Tighten our own executable before use; never repair another owner's file.
+  if (info.mode & 0o020) {
+    if (info.uid !== process.getuid?.())
+      throw new Error("Bundled sudo helper is group-writable and owned by another user.")
+    await chmod(helper, info.mode & ~0o020)
+  }
   const expected = (await Bun.file(`${helper}.sha256`).text()).trim()
   const actual = createHash("sha256")
     .update(new Uint8Array(await Bun.file(helper).arrayBuffer()))

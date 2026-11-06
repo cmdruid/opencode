@@ -17,3 +17,5 @@ Trusted components remain the operating system, terminal/SSH/tmux, sudo/PAM, ins
 The native panel receives only a bounded sanitized pre-authentication snapshot and numeric theme colors on a one-way descriptor, which is closed before forking sudo. It never reads the terminal screen. Resize uses ioctl, resets scrolling margins, and leaves all password input to sudo. The snapshot can be absent without weakening terminal custody. Escape sequences and bracketed paste do not dismiss the final guard.
 
 Ctrl+C cancels while sudo is active. Only after sudo has exited does the final guard disable ISIG and accept the Ctrl+C byte as dismissal. An earlier SIGINT cannot satisfy that read. Terminal input is flushed at the transition and again before restoring OpenCode.
+
+Some package managers apply the installing user's umask and unpack the helper as mode 0775. The plugin removes group-write permission from a helper owned by that same user before verifying its digest and using it. Other-owner group-writable, world-writable, setid, nonregular, and nonexecutable helpers remain rejected. This is local permission tightening, not an install hook or privileged setup.

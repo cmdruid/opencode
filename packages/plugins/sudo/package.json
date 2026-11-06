@@ -1,25 +1,26 @@
 {
-  "name": "@opencode/plugin-sudo",
-  "version": "0.0.0",
-  "description": "Experimental sudo tool with native terminal authentication",
+  "name": "@cmdcode/opencode-safe-sudo",
+  "version": "0.1.0",
+  "description": "Sudo for OpenCode with native password isolation and a compact terminal UI",
   "type": "module",
   "exports": {
     ".": "./index.ts",
     "./server": "./index.ts",
-    "./tui": "./tui.tsx",
+    "./tui": "./tui.js",
     "./rpc": "./rpc.ts"
   },
   "scripts": {
     "typecheck": "bun check --no-script",
     "typecheck:tsc": "tsc --noEmit",
-    "test": "bun test --timeout 30000",
+    "test": "bun run build && bun test --timeout 30000",
     "build:native": "bun script/build-native.ts",
-    "prepack": "bun run build:native"
+    "prepack": "bun run build",
+    "build": "bun run build:native && bun script/build-tui.ts"
   },
   "peerDependencies": {
     "@opencode/plugin": "^2.2.5 || ^0.0.0-dev",
-    "@opentui/core": "0.8.1",
-    "@opentui/solid": "0.8.1",
+    "@opentui/core": "^0.8.1",
+    "@opentui/solid": "^0.8.1",
     "effect": "4.1.0",
     "solid-js": "1.9.17"
   },
@@ -31,7 +32,9 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
-    "@typescript/native": "catalog:"
+    "@typescript/native": "catalog:",
+    "@opentui/core": "0.8.1",
+    "@opentui/solid": "0.8.1"
   },
   "files": [
     "index.ts",
@@ -45,12 +48,35 @@
     "native/helper.c",
     "native/screen.h",
     "native/README.md",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "RELEASING.md",
+    "tui.js"
   ],
   "os": [
     "linux"
   ],
   "cpu": [
     "x64"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmdruid/opencode.git",
+    "directory": "packages/plugins/sudo"
+  },
+  "homepage": "https://github.com/cmdruid/opencode/tree/custom/packages/plugins/sudo",
+  "bugs": {
+    "url": "https://github.com/cmdruid/opencode/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "sudo",
+    "terminal"
   ]
 }

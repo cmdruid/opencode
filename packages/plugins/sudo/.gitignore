@@ -1,3 +1,4 @@
 /opencode-sudo-tty
 /native/bin/
 /*.tgz
+/tui.js

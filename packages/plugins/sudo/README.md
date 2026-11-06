@@ -1,4 +1,4 @@
-# Experimental sudo plugin
+# Safe sudo for OpenCode
 
 A dedicated `sudo` tool for OpenCode v2. **OpenCode never asks for or transports the sudo password.** Its TUI hands the terminal to a small native supervisor; system sudo reads authentication directly from `/dev/tty`. OpenCode receives only the command's output, after authentication.
 
@@ -6,17 +6,17 @@ A dedicated `sudo` tool for OpenCode v2. **OpenCode never asks for or transports
 
 The release package installs like an ordinary OpenCode plugin. It includes its native helper: **no separate helper installation, compiler, shell commands, sudoers edits, or setup password prompt.** Install/enable the package through OpenCode's normal plugin configuration or plugin manager.
 
-This checkout prepares `@opencode/plugin-sudo`, but it has **not been published** to a registry yet. Once published under the chosen package name, the normal configuration entry is:
+The package is configured for its first release, **0.1.0**, and is not yet published. After publication, enable it with:
 
 ```json
 {
-  "plugins": ["@opencode/plugin-sudo"]
+  "plugins": ["@cmdcode/opencode-safe-sudo"]
 }
 ```
 
 The TUI discovers the package's TUI entry normally. The initial release supports **Linux x64**, including SSH/tmux with the TUI running on the same host as the server. The helper is statically linked and included in the release archive. There are no installation lifecycle hooks and no downloads or compilation at first use. Desktop/web, other operating systems/architectures, remote-machine TUIs, and interactive root commands are unsupported.
 
-For a source checkout only, maintainers run `bun run build:native` before loading its directory as a local plugin. End users receive the already built helper in the published package. `bun pm pack` builds the helper at packaging time through `prepack`; publishing is a separate action. Keep release compilation on Linux x64 with a static C toolchain.
+For a source checkout only, maintainers run `bun run build` before loading its directory as a local plugin. End users receive the already built helper in the published package. `bun pm pack` builds the helper at packaging time through `prepack`; publishing is a separate action. Keep release compilation on Linux x64 with a static C toolchain.
 
 ## Usage
 
@@ -54,7 +54,7 @@ See [native/README.md](native/README.md) for the process boundary. Installing th
 
 ## Verification
 
-From this package: `bun run build:native`, `bun typecheck`, `bun run typecheck:tsc`, and `bun test --timeout 30000`. From the repository root: `bun run check`.
+From this package: `bun run build`, `bun typecheck`, `bun run typecheck:tsc`, and `bun test --timeout 30000`. From the repository root: `bun run check`.
 
 Tests exercise the real tool/RPC registry, loaded TUI plugin, approval scrolling at narrow/wide sizes, private socket permissions, single-use claims, malformed frames, and cancellation. Native tests require Python 3, a C compiler, and real Unix pseudo-terminals. They run the production broker, renderer, handoff code, and native helper with an unprivileged fake sudo. Dummy credentials are deliberately printed on both authentication streams to prove they do not reach tool output; raw-input diagnostics are enabled to check the renderer boundary. They also cover passwordless execution, authentication failure, interrupted input, delayed authentication, timeouts, continuous output, stale/remote claims, Ctrl-Z, leftover input, helper crashes, and package replacement/removal during authentication. A packaging test extracts the actual release archive and verifies both plugin entrypoints, executable availability, and rejection of a damaged checksum. They never use real credentials or execute real sudo. Real sudo/PAM policy variants and live SSH/tmux sessions still need manual verification before release.
 
@@ -82,3 +82,7 @@ Automated evidence:
 - Loaded TUI tests cover queued reviews and deferral behind dialogs/editor suspension. Presentation tests cover light/dark colors, ASCII sanitization, and the monochrome/no-frame fallback. Packaging tests verify the actual bundled helper and entrypoints.
 
 Manual acceptance remains owner-driven: try harmless `id -u`, a wrong password, Ctrl-C, Ctrl+C return, and resize in the actual TUI, including an SSH session. Automated fixtures never execute real sudo. Run development clients with `bun run dev:live` so they do not replace the elected server.
+
+## Releasing
+
+See [RELEASING.md](RELEASING.md) for archive verification, the first npm publish, trusted publishing setup, and release tags. The npm name is `@cmdcode/opencode-safe-sudo`; the internal plugin ID remains `experimental.sudo`.
