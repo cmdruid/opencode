@@ -28,6 +28,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { Provider } from "@opencode/core/provider"
 import { Session } from "@opencode/core/session"
+import { SessionInbox } from "@opencode/core/session/inbox"
 import { SharedCache } from "@opencode/core/shared-cache"
 import { InstructionEntry } from "@opencode/core/session/instruction-entry"
 import { PersistentPty } from "@opencode/core/persistent-pty"
@@ -49,6 +50,15 @@ import { Effect, Layer } from "effect"
 import { tempLocationLayer } from "../fixture/location"
 import { emptyMcpLayer } from "../fixture/mcp"
 import { offlineModels } from "../fixture/models"
+
+/** Admit and deliver fixture evidence without starting a model or tool executor. */
+export const addUserTask = Effect.fn(function* (sessionID: Session.ID, text: string) {
+  const session = yield* Session.Service
+  const database = yield* Database.Service
+  const bus = yield* Bus.Service
+  yield* session.prompt({ sessionID, text, resume: false })
+  yield* SessionInbox.promote(database.db, bus, sessionID, "steer")
+})
 
 const npmLayer = Layer.succeed(
   Npm.Service,

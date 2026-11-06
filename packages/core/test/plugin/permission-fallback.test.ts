@@ -7,7 +7,7 @@ import { Effect } from "effect"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
 import { testEffect } from "../lib/effect"
-import { makePluginTestLayer } from "./fixture"
+import { addUserTask, makePluginTestLayer } from "./fixture"
 
 const it = testEffect(makePluginTestLayer(null))
 
@@ -59,11 +59,17 @@ it.live("fallback settings persist per session, default to shadow, and preserve 
     })
     const client = host.rpc(Contract)
     const request = { sessionID: session.id, action: "shell", resources: ["git status"] }
+    const empty = yield* permission.ask(request)
+    expect(empty.effect).toBe("ask")
+    expect(calls).toEqual([])
+    expect((yield* permission.get(empty.id))?.message).toContain("No user task or saved session approval")
+    yield* addUserTask(session.id, "Inspect this checkout")
     expect((yield* client.get({ sessionID: session.id })).fallback).toMatchObject({ mode: "shadow", timeoutMs: 10_000 })
     expect((yield* permission.ask(request)).effect).toBe("ask")
-    expect(yield* client.history({ sessionID: session.id })).toMatchObject([
-      { decision: "escalate", fallback: { mode: "shadow", applied: false, decision: "approve" } },
-    ])
+    expect((yield* client.history({ sessionID: session.id })).find((entry) => entry.fallback)).toMatchObject({
+      decision: "escalate",
+      fallback: { mode: "shadow", applied: false, decision: "approve" },
+    })
     yield* client.setFallback({ sessionID: session.id, mode: "auto" })
     expect((yield* permission.ask(request)).effect).toBe("allow")
     expect((yield* client.history({ sessionID: session.id })).some((entry) => entry.fallback?.applied)).toBe(true)

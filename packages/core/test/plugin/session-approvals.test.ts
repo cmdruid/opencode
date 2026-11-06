@@ -8,7 +8,7 @@ import { Effect, Exit } from "effect"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
 import { testEffect } from "../lib/effect"
-import { makePluginTestLayer } from "./fixture"
+import { addUserTask, makePluginTestLayer } from "./fixture"
 
 const it = testEffect(makePluginTestLayer(null))
 const setup = Effect.gen(function* () {
@@ -73,8 +73,10 @@ it.live("Allow Session records only the server's pending request and still revie
     expect(test.prompts[0]).toContain("Later user restrictions override earlier approvals")
     yield* test.client.revoke({ sessionID: test.session.id, requestID: pending.id })
     expect(yield* test.client.approvals({ sessionID: test.session.id })).toEqual([])
-    yield* test.permission.ask(test.request)
-    expect(test.prompts[1]).not.toContain('"sessionApprovals"')
+    const revoked = yield* test.permission.ask(test.request)
+    expect(revoked.effect).toBe("ask")
+    expect((yield* test.permission.get(revoked.id))?.message).toContain("No user task or saved session approval")
+    expect(test.prompts).toHaveLength(1)
     yield* test.permission.close
   }),
 )
@@ -99,8 +101,10 @@ it.live("ordinary replies, model assessments, stale and foreign requests cannot 
       ),
     ).toBe(true)
     expect(yield* test.client.approvals({ sessionID: test.session.id })).toEqual([])
+    yield* addUserTask(test.session.id, "Inspect service-x on node-a")
     yield* test.client.set({ sessionID: test.session.id, mode: "auto" })
     yield* test.permission.ask(test.request)
+    expect(test.prompts).toHaveLength(1)
     expect(yield* test.client.approvals({ sessionID: test.session.id })).toEqual([])
     yield* test.permission.close
   }),
@@ -117,6 +121,7 @@ it.live("remembered examples stay session-local and configured denials still win
       parentID: test.session.id,
       permissions: [{ action: "*", resource: "*", effect: "ask" }],
     })
+    yield* addUserTask(child.id, "Inspect service-x on node-a")
     yield* test.client.set({ sessionID: child.id, mode: "auto" })
     yield* test.permission.ask({ ...test.request, sessionID: child.id })
     expect(test.prompts[0]).not.toContain('"sessionApprovals"')
