@@ -7,7 +7,8 @@ import { SessionID } from "../../schema/src/session-id"
 import { SessionMessage } from "../../schema/src/session-message"
 import type { Generate } from "../../schema/src/generate"
 import { AbsolutePath } from "../../schema/src/schema"
-import { DateTime, Effect } from "effect"
+import { DateTime, Deferred, Effect, Exit, Fiber } from "effect"
+import { TestClock } from "effect/testing"
 import { it } from "../../core/test/lib/effect"
 import { location } from "../../core/test/fixture/location"
 import { review } from "./review.js"
@@ -28,12 +29,13 @@ const event: PermissionReview = {
 }
 
 function context(
-  text: string,
+  text: string | Effect.Effect<{ text: string }, unknown>,
   answers: Generate.DecisionAnswer[] = [],
   prompt = "Inspect this checkout",
   command = "git status",
 ) {
   const prompts: string[] = []
+  const models: (Model.Ref | undefined)[] = []
   const decisions: Generate.DecisionRequest[] = []
   const ctx = {
     location: location({ directory: AbsolutePath.make("/project") }),
@@ -65,9 +67,10 @@ function context(
     experimental: {
       generate: {
         text: (input) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             prompts.push(input.prompt)
-            return { text }
+            models.push(input.model)
+            return typeof text === "string" ? { text } : yield* text
           }),
         decisions: (input) =>
           Effect.sync(() => {
@@ -82,8 +85,154 @@ function context(
     session: Pick<Plugin.Context["session"], "context">
     experimental: Pick<Plugin.Context["experimental"], "generate">
   }
-  return { ctx, prompts, decisions }
+  return { ctx, prompts, models, decisions }
 }
+
+const fallback = { model: Model.Ref.parse("maple/gpt-oss-120b#permission-review"), mode: "auto" as const }
+const uncertain: Generate.DecisionAnswer = {
+  type: "choice",
+  name: "permission",
+  choice: "approve",
+  confidence: 0.9,
+  probabilities: [{ value: "approve", probability: 0.94 }],
+}
+
+it.effect("chat fallback reuses exact evidence and session approvals, without classifier scores", () =>
+  Effect.gen(function* () {
+    const approval: SessionApproval = {
+      requestID: "per_prior",
+      sessionID: event.request.sessionID,
+      action: "shell",
+      resources: ["git status"],
+      directory: "/project",
+      toolCalls: [{ name: "shell", input: { command: "git status" } }],
+      at: 1,
+    }
+    const fixture = context('{"decision":"approve","reason":"Scoped inspection authorized"}', [uncertain])
+    const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback, minConfidence: 0.95 }, [
+      approval,
+    ])
+    expect(result).toMatchObject({
+      decision: "approve",
+      classifier: { choice: "approve", confidence: 0.9, threshold: 0.95 },
+      fallback: { decision: "approve", mode: "auto", status: "completed", trigger: "low-confidence", applied: true },
+    })
+    expect(fixture.models).toEqual([fallback.model])
+    expect(fixture.prompts[0].split("Evidence (JSON):\n")[1]).toBe(
+      fixture.decisions[0].input.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+    )
+    expect(fixture.prompts[0]).toContain('"sessionApprovals"')
+    expect(fixture.prompts[0]).not.toContain("0.94")
+    expect(fixture.prompts[0]).not.toContain("0.95")
+  }),
+)
+
+it.effect("shadow is the default fallback mode; classifier escalation cannot be overruled", () =>
+  Effect.gen(function* () {
+    for (const mode of [undefined, "shadow", "auto"] as const) {
+      const fixture = context('{"decision":"approve","reason":"Authorized"}', [
+        { ...uncertain, choice: "escalate", confidence: 0.999 },
+      ])
+      const result = yield* review(fixture.ctx, event, {
+        ...options,
+        mode: "decision",
+        fallback: { ...fallback, mode },
+      })
+      expect(result).toMatchObject({
+        decision: "escalate",
+        fallback: { mode: mode ?? "shadow", decision: "approve", trigger: "uncertain", applied: false },
+      })
+      const low = context('{"decision":"approve","reason":"Authorized"}', [uncertain])
+      expect(
+        (yield* review(low.ctx, event, { ...options, mode: "decision", fallback: { ...fallback, mode } })).decision,
+      ).toBe(mode === "auto" ? "approve" : "escalate")
+    }
+  }),
+)
+
+it.effect("fallback never overrides denials, confident approvals, invalid answers, errors or budget limits", () =>
+  Effect.gen(function* () {
+    for (const answer of [
+      { ...uncertain, confidence: 0.99 },
+      { ...uncertain, choice: "deny", confidence: 0.99 },
+      { ...uncertain, choice: "deny", confidence: 0.1 },
+      { ...uncertain, choice: "always" },
+      { ...uncertain, choice: true },
+      { type: "error" as const, name: "permission", reason: "Provider error" },
+    ]) {
+      const fixture = context('{"decision":"approve","reason":"Should never be called"}', [answer])
+      const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })
+      expect(result.fallback).toBeUndefined()
+      expect(fixture.prompts).toEqual([])
+    }
+    for (const fixture of [context("", []), context("", [uncertain], "x".repeat(48_001))]) {
+      expect((yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })).decision).toBe("escalate")
+      expect(fixture.prompts).toEqual([])
+    }
+    const fixture = context("", [uncertain])
+    yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback: { ...fallback, mode: "off" } })
+    expect(fixture.prompts).toEqual([])
+    const ctx = {
+      ...fixture.ctx,
+      experimental: { generate: { ...fixture.ctx.experimental.generate, decisions: () => Effect.fail("Unavailable") } },
+    }
+    expect(
+      Exit.isFailure(yield* review(ctx, event, { ...options, mode: "decision", fallback }).pipe(Effect.exit)),
+    ).toBe(true)
+    expect(fixture.prompts).toEqual([])
+  }),
+)
+
+it.effect("fallback disagreement, malformed output and provider failure preserve human escalation", () =>
+  Effect.gen(function* () {
+    for (const text of [
+      '{"decision":"deny","reason":"Not authorized"}',
+      '{"decision":"escalate","reason":"Needs context"}',
+      '{"decision":"approve"}',
+      '```json\n{"decision":"approve","reason":"Unsafe parsing"}\n```',
+      Effect.fail("Provider unavailable"),
+    ]) {
+      const fixture = context(text, [uncertain])
+      const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })
+      expect(result.decision).toBe("escalate")
+      expect(result.fallback?.applied).toBe(false)
+      expect(fixture.prompts).toHaveLength(1)
+    }
+  }),
+)
+
+it.effect("fallback timeout interrupts the call; caller cancellation never returns an assessment", () =>
+  Effect.gen(function* () {
+    for (const cancel of [false, true]) {
+      const started = yield* Deferred.make<void>()
+      const interrupted = yield* Deferred.make<void>()
+      const fixture = context(
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+        ),
+        [uncertain],
+      )
+      const fiber = yield* review(fixture.ctx, event, {
+        ...options,
+        mode: "decision",
+        fallback: { ...fallback, timeoutMs: 100 },
+      }).pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      if (cancel) {
+        yield* Fiber.interrupt(fiber)
+        expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true)
+      } else {
+        yield* TestClock.adjust(100)
+        expect(yield* Fiber.join(fiber)).toMatchObject({
+          decision: "escalate",
+          fallback: { status: "timeout", applied: false, durationMs: 100 },
+        })
+      }
+      expect(yield* Deferred.isDone(interrupted)).toBe(true)
+    }
+  }),
+)
 
 it.effect("chat review supplies exact action and user evidence and accepts all three outcomes", () =>
   Effect.gen(function* () {

@@ -2,8 +2,8 @@ import { Model } from "@opencode/plugin/effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { ReviewResult } from "@opencode/plugin/permission"
 import type { PermissionReview } from "@opencode/plugin/permission"
-import { Effect, Option, Schema, Struct } from "effect"
-import { ReviewMode, type SessionApproval } from "./contract.js"
+import { Clock, Effect, Option, Schema, Struct } from "effect"
+import { FallbackMode, ReviewMode, type Assessment, type FallbackAssessment, type SessionApproval } from "./contract.js"
 
 export const Options = Schema.Struct({
   model: Model.Ref,
@@ -13,6 +13,11 @@ export const Options = Schema.Struct({
   shadow: Schema.Boolean.pipe(Schema.optional),
   defaultMode: ReviewMode.pipe(Schema.optional),
   minConfidence: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })).pipe(Schema.optional),
+  fallback: Schema.Struct({
+    model: Model.Ref,
+    mode: FallbackMode.pipe(Schema.optional),
+    timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 15_000 })).pipe(Schema.optional),
+  }).pipe(Schema.optional),
 })
 
 const instructions = `You review a proposed tool permission request on the user's behalf.
@@ -38,7 +43,7 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
   event: PermissionReview,
   options: typeof Options.Type,
   approvals: readonly SessionApproval[] = [],
-) {
+): Effect.fn.Return<Pick<Assessment, "decision" | "reason" | "classifier" | "fallback">, unknown> {
   const history = yield* ctx.session.context({ sessionID: event.request.sessionID })
   const required = {
     directory: ctx.location.directory,
@@ -80,10 +85,11 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
     ...required,
     ...(observations.length ? { observations, observationsOmitted: context.available - observations.length } : {}),
   })
+  const prompt = `${guidance}\nReturn only a JSON object with decision (approve, deny, or escalate) and a short reason.\n\nReview policy:\n${options.policy ?? "Use the rules above."}\n\nEvidence (JSON):\n${evidence}`
   if (options.mode !== "decision") {
     const response = yield* ctx.experimental.generate.text({
       model: options.model,
-      prompt: `${guidance}\nReturn only a JSON object with decision (approve, deny, or escalate) and a short reason.\n\nReview policy:\n${options.policy ?? "Use the rules above."}\n\nEvidence (JSON):\n${evidence}`,
+      prompt,
     })
     const result = Schema.decodeUnknownOption(Schema.fromJsonString(ReviewResult))(response.text)
     return Option.getOrElse(result, () => ({
@@ -119,22 +125,79 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
     probabilities: answer.probabilities,
     threshold: options.minConfidence ?? 0.98,
   }
-  if (classifier.confidence < classifier.threshold)
-    return {
-      decision: "escalate" as const,
-      reason: `Classifier proposed ${classifier.choice} (confidence ${classifier.confidence}, required ${classifier.threshold}); please review the request.`,
-      classifier,
-    }
-  const result = Schema.decodeUnknownOption(ReviewResult)({
+  const parsed = Schema.decodeUnknownOption(ReviewResult)({
     decision: answer.choice,
     reason: `Permission classifier selected ${answer.choice} (confidence ${answer.confidence}).`,
   })
+  const result =
+    classifier.confidence < classifier.threshold
+      ? {
+          decision: "escalate" as const,
+          reason: `Classifier proposed ${classifier.choice} (confidence ${classifier.confidence}, required ${classifier.threshold}); please review the request.`,
+        }
+      : Option.getOrElse(parsed, () => ({
+          decision: "escalate" as const,
+          reason: "Classifier returned an unsupported decision; please review the request.",
+        }))
+  const fallback = options.fallback
+  // Only ambiguous requests qualify. A denial, invalid classifier answer or confident approval never calls chat.
+  if (
+    !fallback ||
+    fallback.mode === "off" ||
+    result.decision !== "escalate" ||
+    (classifier.choice !== "approve" && classifier.choice !== "escalate")
+  )
+    return { ...result, classifier }
+  const started = yield* Clock.currentTimeMillis
+  // Reuse the exact evidence snapshot without exposing the classifier's choice or scores to the second opinion.
+  const assessment = yield* ctx.experimental.generate.text({ model: fallback.model, prompt }).pipe(
+    Effect.map((response) => {
+      const parsed = Schema.decodeUnknownOption(Schema.fromJsonString(ReviewResult))(response.text)
+      return Option.isSome(parsed)
+        ? { ...parsed.value, status: "completed" as const }
+        : {
+            decision: "escalate" as const,
+            reason: "Chat fallback returned an invalid decision.",
+            status: "invalid" as const,
+          }
+    }),
+    Effect.catch(() =>
+      Effect.succeed({
+        decision: "escalate" as const,
+        reason: "Chat fallback unavailable.",
+        status: "unavailable" as const,
+      }),
+    ),
+    Effect.timeoutOption(fallback.timeoutMs ?? 10_000),
+    Effect.map(
+      Option.getOrElse(() => ({
+        decision: "escalate" as const,
+        reason: "Chat fallback timed out.",
+        status: "timeout" as const,
+      })),
+    ),
+  )
+  // A second opinion can confirm a low-confidence approval, but disagreement never grants authority.
+  const applied =
+    fallback.mode === "auto" &&
+    classifier.choice === "approve" &&
+    assessment.status === "completed" &&
+    assessment.decision === "approve"
+  const detail = {
+    ...assessment,
+    model: { ...fallback.model },
+    mode: fallback.mode ?? "shadow",
+    trigger: classifier.choice === "approve" ? "low-confidence" : "uncertain",
+    durationMs: (yield* Clock.currentTimeMillis) - started,
+    applied,
+  } satisfies FallbackAssessment
   return {
-    ...Option.getOrElse(result, () => ({
-      decision: "escalate" as const,
-      reason: "Classifier returned an unsupported decision; please review the request.",
-    })),
+    decision: applied ? ("approve" as const) : result.decision,
+    reason: applied
+      ? `Chat fallback approved: ${assessment.reason}`
+      : `${result.reason} ${detail.mode === "shadow" ? "Shadow chat fallback" : "Chat fallback"}: ${assessment.decision}. ${assessment.reason}`,
     classifier,
+    fallback: detail,
   }
 })
 

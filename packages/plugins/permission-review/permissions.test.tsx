@@ -3,10 +3,17 @@ import { InputRenderable, TextareaRenderable } from "@opentui/core"
 import { Schema } from "effect"
 import { createAppFixture } from "../../tui/test/fixture/app"
 import { directory, json } from "../../tui/test/fixture/tui-client"
-import { Preset, type ReviewMode } from "./contract"
+import { FallbackMode, Preset, type ReviewMode } from "./contract"
 
 async function fixture(
-  options: { auto?: boolean; autoaccept?: boolean; fail?: boolean; home?: boolean; createFail?: boolean } = {},
+  options: {
+    auto?: boolean
+    autoaccept?: boolean
+    fail?: boolean
+    home?: boolean
+    createFail?: boolean
+    fallback?: boolean
+  } = {},
 ) {
   const session = {
     id: "ses_permissions_ui",
@@ -18,12 +25,22 @@ async function fixture(
     time: { created: 0, updated: 0 },
   }
   const updates: Preset[] = []
+  const fallbackUpdates: FallbackMode[] = []
   const created: unknown[] = []
   const submissions: string[] = []
   const state = {
     preset: "configured" as Preset,
     mode: "manual" as ReviewMode,
     model: { providerID: "test", id: "reviewer" },
+    ...(options.fallback
+      ? {
+          fallback: {
+            model: { providerID: "maple", id: "gpt-oss-120b", variant: "permission-review" },
+            mode: "shadow" as FallbackMode,
+            timeoutMs: 10000,
+          },
+        }
+      : {}),
   }
   const setup = await createAppFixture({
     width: 112,
@@ -48,6 +65,16 @@ async function fixture(
       if (url.pathname === `/api/session/${session.id}/message`) return json({ data: [], cursor: {} })
       if (url.pathname === `/api/session/${session.id}/inbox`) return json({ data: [] })
       if (url.pathname === "/api/rpc/opencode.permission-review/get") return json({ output: state })
+      if (url.pathname === "/api/rpc/opencode.permission-review/setFallback") {
+        const body = Schema.decodeUnknownSync(
+          Schema.Struct({ input: Schema.Struct({ sessionID: Schema.String, mode: FallbackMode }) }),
+        )(await request.json())
+        expect(body.input.sessionID).toBe(session.id)
+        if (!state.fallback) throw new Error("Missing fixture fallback")
+        state.fallback.mode = body.input.mode
+        fallbackUpdates.push(body.input.mode)
+        return json({ output: state })
+      }
       if (url.pathname === "/api/rpc/opencode.permission-review/set") {
         expect(await request.json()).toMatchObject({ input: { sessionID: session.id, mode: "shadow" } })
         state.preset = "shadow"
@@ -82,7 +109,7 @@ async function fixture(
       }
     },
   })
-  return { ...setup, updates, created, submissions }
+  return { ...setup, updates, fallbackUpdates, created, submissions }
 }
 
 async function open(setup: Awaited<ReturnType<typeof fixture>>) {
@@ -124,6 +151,43 @@ for (const settings of [false, true]) {
     expect(setup.created).toHaveLength(1)
   })
 }
+
+test("chat fallback is managed through Settings without changing the preset or reviewer", async () => {
+  await using setup = await fixture({ fallback: true })
+  await setup.ready
+  for (const mode of ["Automatic", "Off", "Shadow"]) {
+    await open(setup)
+    await choose(setup, "Settings")
+    await setup.waitForFrame((frame) => frame.includes("Permission settings — this session"))
+    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+    await choose(setup, "Chat fallback")
+    await setup.waitForFrame((frame) => frame.includes("Chat fallback — this session"))
+    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+    setup.resize(58, 30)
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Automatic")
+    await choose(setup, mode)
+    await setup.waitForFrame((frame) => frame.includes(`Chat fallback: ${mode}`))
+    setup.resize(112, 36)
+    await setup.renderOnce()
+  }
+  expect(setup.fallbackUpdates).toEqual(["auto", "off", "shadow"])
+  expect(setup.updates).toEqual([])
+  expect(setup.submissions).toEqual([])
+})
+
+test("an unconfigured fallback explains setup without changing anything", async () => {
+  await using setup = await fixture()
+  await setup.ready
+  await open(setup)
+  await choose(setup, "Settings")
+  await setup.waitForFrame((frame) => frame.includes("Permission settings — this session"))
+  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
+  await choose(setup, "Chat fallback")
+  await setup.waitForFrame((frame) => frame.includes("Configure a fallback model"))
+  expect(setup.fallbackUpdates).toEqual([])
+  expect(setup.updates).toEqual([])
+})
 
 test("home-screen session creation failure shows an error without opening a selector", async () => {
   await using setup = await fixture({ home: true, createFail: true })

@@ -3,7 +3,7 @@ import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
 import { Clock, Effect, Option, Schema } from "effect"
 import path from "node:path"
 import type { AssertInput } from "@opencode/plugin/permission"
-import { Assessment, Contract, ReviewMode, Selection, SessionApproval } from "./contract.js"
+import { Assessment, Contract, FallbackMode, ReviewMode, Selection, SessionApproval } from "./contract.js"
 import { Options, review } from "./review.js"
 
 export default Plugin.define({
@@ -47,15 +47,38 @@ export default Plugin.define({
       }
       return { preset: "configured" as const, mode: yield* mode(sessionID) }
     })
+    const fallback = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
+      if (!options.fallback || options.mode !== "decision") return undefined
+      const value = yield* ctx.storage.get(`fallback/${sessionID}`)
+      return {
+        model: options.fallback.model,
+        mode:
+          value === undefined
+            ? (options.fallback.mode ?? "shadow")
+            : Option.getOrElse(Schema.decodeUnknownOption(FallbackMode)(value), () => "off" as const),
+        timeoutMs: options.fallback.timeoutMs ?? 10_000,
+      }
+    })
     const state = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
+      const chat = yield* fallback(sessionID)
       return {
         ...(yield* selection(sessionID)),
         model: options.model,
         ...(options.actions ? { actions: options.actions } : {}),
+        ...(chat ? { fallback: chat } : {}),
       }
     })
     const rpc: RpcRegistration<typeof Contract> = yield* ctx.rpc
       .register(Contract, {
+        setFallback: Effect.fn(function* (input) {
+          yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
+          if (!options.fallback || options.mode !== "decision")
+            return yield* Effect.die(new Error("Configure a chat fallback for the decision reviewer first"))
+          yield* ctx.storage.set(`fallback/${input.sessionID}`, input.mode)
+          const next = yield* state(input.sessionID)
+          yield* rpc.events.emit("changed", { sessionID: input.sessionID, state: next }).pipe(Effect.orDie)
+          return next
+        }),
         allowSession: Effect.fn(function* (input) {
           // Resolve the pending request on the server; a client cannot invent an approval example.
           const pending = yield* ctx.permission.list({ sessionID: input.sessionID }).pipe(Effect.orDie)
@@ -173,7 +196,8 @@ export default Plugin.define({
         const remembered = (yield* approvals(event.request.sessionID))
           .filter((entry) => entry.action === event.request.action)
           .slice(0, 20)
-        const result = yield* review(ctx, event, options, remembered).pipe(
+        const chat = yield* fallback(event.request.sessionID)
+        const result = yield* review(ctx, event, { ...options, fallback: chat }, remembered).pipe(
           Effect.catch(() =>
             Effect.succeed({
               decision: "escalate" as const,

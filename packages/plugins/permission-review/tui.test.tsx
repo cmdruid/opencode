@@ -61,9 +61,19 @@ test("the plugin exposes session modes and assessment details through the real T
               shadow: true,
               at: 1,
               durationMs: 715,
-              decision: "approve",
-              reason: "Authorized local inspection",
-              classifier: { choice: "approve", confidence: 0.9954, threshold: 0.98, probabilities: [] },
+              decision: "escalate",
+              reason: "Classifier below threshold; shadow fallback suggests approval",
+              classifier: { choice: "approve", confidence: 0.9, threshold: 0.98, probabilities: [] },
+              fallback: {
+                model: { providerID: "test", id: "second-opinion" },
+                mode: "shadow",
+                trigger: "low-confidence",
+                status: "completed",
+                durationMs: 100,
+                decision: "approve",
+                reason: "Independent approval",
+                applied: false,
+              },
             },
           ],
         })
@@ -85,8 +95,10 @@ test("the plugin exposes session modes and assessment details through the real T
   expect(setup.captureCharFrame()).toContain("README.md")
   setup.mockInput.pressEnter()
   await setup.waitForFrame((frame) => frame.includes("Permission assessment"))
-  expect(setup.captureCharFrame()).toContain("Confidence: 0.9954; threshold: 0.98")
-  expect(setup.captureCharFrame()).toContain("Shadow proposal: approve")
+  expect(setup.captureCharFrame()).toContain("Confidence: 0.9; threshold: 0.98")
+  expect(setup.captureCharFrame()).toContain("Shadow proposal: escalate")
+  expect(setup.captureCharFrame()).toContain("Fallback model: test/second-opinion")
+  expect(setup.captureCharFrame().replace(/\s+/g, " ")).toContain("did not change reviewer decision")
   setup.resize(58, 30)
   await setup.renderOnce()
   expect(setup.captureCharFrame()).toContain("Permission assessment")

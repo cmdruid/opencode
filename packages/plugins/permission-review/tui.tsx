@@ -1,8 +1,9 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, onCleanup, Show } from "solid-js"
-import { Contract, type Assessment, type Preset, type ReviewMode, type State } from "./contract.js"
+import { Contract, type Assessment, type FallbackMode, type Preset, type ReviewMode, type State } from "./contract.js"
 
 const labels = { manual: "Manual", shadow: "Shadow", auto: "Approve for me" } satisfies Record<ReviewMode, string>
+const fallbackLabels = { off: "Off", shadow: "Shadow", auto: "Automatic" } satisfies Record<FallbackMode, string>
 const presets = {
   "read-only": { title: "Read only", description: "Read files; ask for edits and shell" },
   workspace: { title: "Ask for approval", description: "Local edits; ask for shell/network" },
@@ -153,6 +154,30 @@ export default Plugin.define({
       await context.ui.dialog.alert({ title: "Permission assessment", message: describe(selected) })
     }
 
+    async function showFallback(session: NonNullable<ReturnType<typeof current>>) {
+      const state = await rpc.get({ sessionID: session.sessionID }, { location: session.location })
+      if (!state.fallback) {
+        await context.ui.dialog.alert({
+          title: "Chat fallback",
+          message: "Configure a fallback model in the decision reviewer's plugin options first.",
+        })
+        return
+      }
+      const mode = await context.ui.dialog.select<FallbackMode>({
+        title: "Chat fallback — this session",
+        current: state.fallback.mode,
+        options: [
+          { value: "off", title: fallbackLabels.off, description: "Use only the classifier" },
+          { value: "shadow", title: fallbackLabels.shadow, description: "Record a second opinion; still ask you" },
+          { value: "auto", title: fallbackLabels.auto, description: "Approve only when both models agree" },
+        ],
+      })
+      if (!mode || mode === state.fallback.mode) return
+      if (!(await requirePrompts())) return
+      await rpc.setFallback({ sessionID: session.sessionID, mode }, { location: session.location })
+      context.ui.toast.show({ message: `Chat fallback: ${fallbackLabels[mode]}`, variant: "info" })
+    }
+
     const showDetails = (state: State) =>
       context.ui.dialog.alert({
         title: "Active permissions",
@@ -160,6 +185,12 @@ export default Plugin.define({
           `Preset: ${presets[state.preset === "shadow" ? "workspace" : state.preset].title}`,
           `Reviewer: ${labels[state.mode]} (${state.model.providerID}/${state.model.id})`,
           `Reviewed actions: ${state.actions?.join(", ") ?? "all requests needing approval"}`,
+          ...(state.fallback
+            ? [
+                `Chat fallback: ${fallbackLabels[state.fallback.mode]} (${state.fallback.model.providerID}/${state.fallback.model.id}${state.fallback.model.variant ? `#${state.fallback.model.variant}` : ""}, ${state.fallback.timeoutMs} ms)`,
+                "Fallback overrides apply only to this session; children use the configured default.",
+              ]
+            : []),
           ...(state.inheritedFrom ? [`Inherited from: ${state.inheritedFrom}`] : []),
           "",
           "OpenCode's effective approval requirements and denials always apply. Presets can add approval requirements; Full access adds none. The selected reviewer handles requests that still need approval.",
@@ -213,6 +244,7 @@ export default Plugin.define({
                   title: "Permission settings — this session",
                   options: [
                     { value: "mode", title: "Reviewer mode", description: "Manual, Shadow or Approve for me" },
+                    { value: "fallback", title: "Chat fallback", description: "Second opinion for uncertain requests" },
                     {
                       value: "approvals",
                       title: "Session approvals",
@@ -231,6 +263,7 @@ export default Plugin.define({
                   ],
                 })
                 if (setting === "mode") await showReviewer(session)
+                if (setting === "fallback") await showFallback(session)
                 if (setting === "approvals") await showApprovals(session)
                 if (setting === "history") await showHistory(session)
                 if (setting === "details") await showDetails(state)
@@ -313,6 +346,14 @@ function describe(entry: Assessment) {
           `Raw choice: ${entry.classifier.choice}`,
           `Confidence: ${entry.classifier.confidence}; threshold: ${entry.classifier.threshold}`,
           `Choice scores: ${entry.classifier.probabilities.map((item) => `${item.value} ${item.probability}`).join(", ")}`,
+        ]
+      : []),
+    ...(entry.fallback
+      ? [
+          `Chat fallback: ${fallbackLabels[entry.fallback.mode]} · ${entry.fallback.decision} (${entry.fallback.status}, ${entry.fallback.durationMs} ms)`,
+          `Fallback model: ${entry.fallback.model.providerID}/${entry.fallback.model.id}${entry.fallback.model.variant ? `#${entry.fallback.model.variant}` : ""}`,
+          `Trigger: ${entry.fallback.trigger}; ${entry.fallback.applied ? "used in reviewer decision" : "did not change reviewer decision"}`,
+          `Second opinion: ${entry.fallback.reason}`,
         ]
       : []),
     "",

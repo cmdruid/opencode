@@ -34,9 +34,10 @@ The same package exports both the server plugin and its TUI companion. A connect
 - `/permissions` (or **Permissions** in the command palette) is the plugin's single command. It opens the four permission presets plus **Settings** and marks the active preset. **Ctrl+I** shows its details, reviewer model, action filter and inheritance.
 - The prompt footer displays the active preset, or the review mode when using configured rules. Selections are stored on the server and survive reconnects. Subagents inherit the nearest selected ancestor's preset, unless explicitly overridden in that child. Unrelated sessions and forks without a parent relationship keep their own selection or the configured default.
 - **Settings → Reviewer mode** selects **Manual**, **Shadow**, or **Approve for me** without changing the session's scope. Shadow is a testing control: the model suggests a decision and the human still decides.
+- **Settings → Chat fallback** selects **Off**, **Shadow**, or **Automatic** for a configured second-opinion model. This override stays in the current session; child sessions use the configured fallback default. It does not change the permission preset or primary reviewer mode.
 - **Settings → Session approvals** inspects or revokes examples saved with Allow Session. **Settings → Active permissions** shows the current scope, reviewer and inheritance.
 - `/permissions` is also available on the home screen. Opening it there creates an empty session in the current directory so you can choose permissions before the first prompt; it makes no model call and runs no tools. Cancelling leaves that empty session open with its existing defaults. Opening or cancelling Settings does not change permissions.
-- **Settings → Review history** opens the current session's latest 50 completed assessments. Select a row for the action, resources, model, reason, timing, raw classifier scores, and threshold. Rows distinguish shadow proposals from enforced decisions. Older assessments without classifier diagnostics remain readable.
+- **Settings → Review history** opens the current session's latest 50 completed assessments. Select a row for the action, resources, model, reason, timing, raw classifier scores, and threshold. When chat was consulted, details also show its model, trigger, recommendation, status, duration and whether it changed the reviewer decision. Rows distinguish shadow proposals from enforced decisions. Older assessments without classifier diagnostics remain readable.
 
 The former `/permissions-test`, `/permission-reviews` and `/session-approvals` commands and their separate command-palette entries have been removed. All these controls now live under `/permissions → Settings`.
 
@@ -60,6 +61,45 @@ The controls use the plugin's experimental typed RPC contract, so they require t
 `actions` matches exact permission action names; omitted means all actions that require approval. Until a preset is selected, the plugin leaves existing rules unchanged: an `allow` bypasses review and a `deny` stays denied. The workspace presets add approval requirements through the existing `permission.evaluate` hook; they do not rewrite configuration or saved grants. Only requests whose final effect is `ask` reach the reviewer.
 
 For a decision model, set `mode` to `decision`. `minConfidence` defaults to `0.98`; lower-confidence responses escalate. This is a routing threshold, not a measured probability of safe execution. Evaluate the selected model and policy on representative actions before relying on it.
+
+## Chat fallback
+
+Decision reviewers can consult a separate, stateless chat model for a second opinion. Add `fallback` to the plugin options; omitting it preserves classifier-only behavior:
+
+```jsonc
+{
+  "model": { "providerID": "maple", "id": "decision-large" },
+  "mode": "decision",
+  "minConfidence": 0.95,
+  "fallback": {
+    "model": { "providerID": "maple", "id": "gpt-oss-120b", "variant": "permission-review" },
+    "mode": "shadow",
+    "timeoutMs": 10000,
+  },
+}
+```
+
+Configure the dedicated variant on the existing Maple chat model to bound generation without changing that model's usual settings. Append to its `variants` array:
+
+```json
+{ "id": "permission-review", "body": { "reasoning_effort": "low", "max_tokens": 1024 } }
+```
+
+The fallback uses the existing generation API and provider credentials. Generation settings, including the output-token limit, belong to the configured model/variant; the plugin does not override them. The selected Maple profile uses low reasoning effort and a 1,024-token cap. The plugin bounds additional time to 10 seconds by default (`timeoutMs` accepts 100–15,000 ms); Core's existing 30-second deadline still bounds the whole review. The provider adapter may retry transient failures within these deadlines.
+
+| Classifier result                                               | Second opinion | Automatic fallback effect                           |
+| --------------------------------------------------------------- | -------------- | --------------------------------------------------- |
+| Approve at or above threshold                                   | Not called     | Existing classifier approval                        |
+| Approve below threshold                                         | Called         | Approve only if chat also approves                  |
+| Escalate, at any confidence                                     | Called         | Still ask the human; chat is advisory               |
+| Deny, at any confidence                                         | Not called     | Existing denial or below-threshold human escalation |
+| Missing/invalid answer, failure, or oversized required evidence | Not called     | Ask the human                                       |
+
+Both models must independently select approve for the fallback to grant permission. Chat denials, disagreement, invalid JSON, errors and timeouts leave the human prompt in place. The chat model receives the same evidence snapshot, policy and scoped session approvals, without the classifier's choice or scores. Neither model can call tools. No host-specific instructions or allowlist is added.
+
+Fallback defaults to **Shadow** when configured: record the second opinion without changing the classifier's decision flow. **Automatic** allows the agreement rule above, but the primary reviewer's **Shadow** mode still requires a human. **Off** skips the chat call. Settings and revocations affect subsequent reviews, not reviews already running. Inspect recommendations in **Settings → Review history** before enabling automatic fallback. Prompt injection can still fool a model; agreement is an additional gate, not a proof of authorization.
+
+These changes are plugin-only. A local source plugin and its companion reload without rebuilding or restarting OpenCode. Adding or changing the configuration uses the normal configuration reload; pending prompts are not re-reviewed.
 
 ## Decision flow
 
@@ -118,4 +158,4 @@ For real model trials, see [the evaluation guide](evaluation/README.md). It incl
 
 Before enabling broader automation, collect representative shadow decisions with the chosen model, including prompt injection attempts and compacted or delegated sessions. This version uses a stateless reviewer; it does not retrieve older authorization or investigate unknown scripts. A reviewer with restricted inspection tools remains a possible follow-up if those evidence gaps cause excessive escalation.
 
-The next planned upgrade is a second opinion using Maple's chat API and an inexpensive, fast reasoning-capable model. Start with low-confidence or uncertain classifier results, reuse the same evidence and scoped session examples, and keep configured denials authoritative. Bound the additional call's latency and cost; errors, disagreement or unresolved uncertainty should return to the human. Evaluate the second opinion in shadow mode against labeled SSH/curl, changed-target, destructive and prompt-injection cases before allowing it to approve requests. Model selection and the fallback implementation are deferred until Allow Session is installed and verified.
+The Maple chat fallback is available with separate session controls and audit details. Its initial trials and the observed injection failure are documented in the evaluation guide. Keep new deployments in shadow mode while collecting representative human comparisons.
