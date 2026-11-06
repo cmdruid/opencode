@@ -576,10 +576,11 @@
       },
     },
     "packages/plugins/permission-review": {
-      "name": "@opencode/plugin-permission-review",
-      "version": "2.2.5",
+      "name": "@cmdcode/opencode-auto-permissions",
+      "version": "0.1.0-alpha.0",
       "devDependencies": {
         "@opencode/core": "workspace:*",
+        "@opencode/theme": "workspace:*",
         "@opencode/tui": "workspace:*",
         "@opentui/core": "catalog:",
         "@opentui/solid": "catalog:",
@@ -1601,6 +1602,8 @@
 
     "@cloudflare/workers-types": ["@cloudflare/workers-types@4.20251008.0", "", {}, "sha512-dZLkO4PbCL0qcCSKzuW7KE4GYe49lI12LCfQ5y9XeSwgYBoAUbwH4gmJ6A0qUIURiTJTkGkRkhVPqpq2XNgYRA=="],
 
+    "@cmdcode/opencode-auto-permissions": ["@cmdcode/opencode-auto-permissions@workspace:packages/plugins/permission-review"],
+
     "@cmdcode/opencode-safe-sudo": ["@cmdcode/opencode-safe-sudo@workspace:packages/plugins/sudo"],
 
     "@corvu/dialog": ["@corvu/dialog@0.2.4", "", { "dependencies": { "@corvu/utils": "~0.4.2", "solid-dismissible": "~0.1.1", "solid-focus-trap": "~0.1.8", "solid-presence": "~0.2.0", "solid-prevent-scroll": "~0.1.10" }, "peerDependencies": { "solid-js": "^1.8" } }, "sha512-n54vJq+fOy8GVrnYBdJpD6JXNuyx7LOeMrRxwzAvZnYGpW8+AA12tnb/P/2emJj/HjOO5otheGKb0breshdFlA=="],
@@ -2040,8 +2043,6 @@
     "@opencode/plugin-browser": ["@opencode/plugin-browser@workspace:packages/plugin-browser"],
 
     "@opencode/plugin-figma": ["@opencode/plugin-figma@workspace:packages/plugins/figma"],
-
-    "@opencode/plugin-permission-review": ["@opencode/plugin-permission-review@workspace:packages/plugins/permission-review"],
 
     "@opencode/protocol": ["@opencode/protocol@workspace:packages/protocol"],
 

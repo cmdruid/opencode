@@ -1,24 +1,10 @@
-import { Model } from "@opencode/plugin/effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import { ReviewResult } from "@opencode/plugin/permission"
 import type { PermissionReview } from "@opencode/plugin/permission"
 import { Clock, Effect, Option, Schema, Struct } from "effect"
-import { FallbackMode, ReviewMode, type Assessment, type FallbackAssessment, type SessionApproval } from "./contract.js"
+import { Options, type Assessment, type FallbackAssessment, type SessionApproval } from "./contract.js"
 
-export const Options = Schema.Struct({
-  model: Model.Ref,
-  mode: Schema.Literals(["chat", "decision"]).pipe(Schema.optional),
-  policy: Schema.String.pipe(Schema.optional),
-  actions: Schema.Array(Schema.String).pipe(Schema.optional),
-  shadow: Schema.Boolean.pipe(Schema.optional),
-  defaultMode: ReviewMode.pipe(Schema.optional),
-  minConfidence: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })).pipe(Schema.optional),
-  fallback: Schema.Struct({
-    model: Model.Ref,
-    mode: FallbackMode.pipe(Schema.optional),
-    timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 15_000 })).pipe(Schema.optional),
-  }).pipe(Schema.optional),
-})
+export { Options } from "./contract.js"
 
 const instructions = `You review a proposed tool permission request on the user's behalf.
 Choose approve, deny, or escalate. Your decision covers exactly this request, never future requests.

@@ -1,26 +1,31 @@
 {
-  "name": "@opencode/plugin-permission-review",
-  "version": "2.2.5",
-  "description": "Experimental automatic permission review for OpenCode",
+  "name": "@cmdcode/opencode-auto-permissions",
+  "version": "0.1.0-alpha.0",
+  "description": "Experimental model-assisted permission review and session controls for OpenCode",
   "type": "module",
   "license": "MIT",
   "exports": {
     ".": "./index.ts",
     "./server": "./index.ts",
-    "./tui": "./tui.tsx"
+    "./tui": "./tui.js"
   },
   "files": [
     "index.ts",
     "review.ts",
+    "settings.ts",
     "connections.ts",
     "contract.ts",
-    "tui.tsx",
-    "README.md"
+    "tui.js",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "test": "bun test --timeout 30000 --preload @opentui/solid/preload --only-failures",
+    "test": "bun run build && bun test --timeout 30000 --preload @opentui/solid/preload --only-failures",
     "typecheck": "bun check --no-script",
-    "typecheck:tsc": "tsc --noEmit"
+    "typecheck:tsc": "tsc --noEmit",
+    "build": "bun script/build-tui.ts",
+    "pack": "bun script/pack.ts",
+    "check:package": "bun script/check-package.ts"
   },
   "peerDependencies": {
     "@opencode/plugin": "^2.2.5",
@@ -44,6 +49,28 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@typescript/native": "catalog:",
-    "solid-js": "catalog:"
-  }
+    "solid-js": "catalog:",
+    "@opencode/theme": "workspace:*"
+  },
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmdruid/opencode.git",
+    "directory": "packages/plugins/permission-review"
+  },
+  "homepage": "https://github.com/cmdruid/opencode/tree/custom/packages/plugins/permission-review",
+  "bugs": {
+    "url": "https://github.com/cmdruid/opencode/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "tag": "next"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "permissions",
+    "automatic-review"
+  ]
 }

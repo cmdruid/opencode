@@ -15,7 +15,12 @@ await rm("dist/npm", { recursive: true, force: true })
 await rm("dist/archives", { recursive: true, force: true })
 
 const pkgjsons = await Array.fromAsync(new Bun.Glob("**/package.json").scan({ absolute: true })).then((files) =>
-  files.filter((file) => !file.includes("node_modules") && !file.includes("dist")),
+  files.filter(
+    (file) =>
+      !file.includes("node_modules") &&
+      !file.includes("dist") &&
+      file !== path.resolve("packages/plugins/permission-review/package.json"),
+  ),
 )
 for (const file of pkgjsons) {
   const text = await Bun.file(file).text()

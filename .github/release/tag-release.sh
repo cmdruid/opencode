@@ -5,8 +5,9 @@
 . "$(dirname "$0")/lib.sh"
 
 tag="v$OPENCODE_VERSION"
-# @opencode/pty is versioned separately, by process-daemon-v<version> tags.
-git ls-files -z -- '*package.json' bun.lock ':!packages/process-daemon/**' | xargs -0 sed -i -E "s/\"version\": \"[^\"]+\"/\"version\": \"$OPENCODE_VERSION\"/g"
+# @opencode/pty and permission review have independent release versions.
+git ls-files -z -- '*package.json' ':!packages/process-daemon/**' ':!packages/plugins/permission-review/**' | xargs -0 sed -i -E "s/\"version\": \"[^\"]+\"/\"version\": \"$OPENCODE_VERSION\"/g"
+sed -i -E '/^    "packages\/(process-daemon|plugins\/permission-review)": \{/,/^    \},/b; s/"version": "[^"]+"/"version": "'"$OPENCODE_VERSION"'"/g' bun.lock
 
 if [ -n "${OPENCODE_RELEASE_NOTES:-}" ] && ! grep -qF -x "## $tag" CHANGELOG.md && ! grep -qF "## $tag " CHANGELOG.md; then
   notes=$(mktemp)

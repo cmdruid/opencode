@@ -7,12 +7,19 @@ const SavedConnection = Schema.Struct({ url: Schema.String, providerID: Schema.S
 type SavedConnection = typeof SavedConnection.Type
 
 /** Connection overrides are server-wide; only non-secret metadata enters plugin storage. */
-export const connections = Effect.fn(function* (ctx: Plugin.Context, options: typeof Options.Type) {
-  const roles: ConnectionRole[] = ["classifier", ...(options.fallback ? ["fallback" as const] : [])]
+export const connections = Effect.fn(function* (
+  ctx: Plugin.Context,
+  options: typeof Options.Type,
+  read: Effect.Effect<typeof Options.Type, unknown> = Effect.succeed(options),
+) {
+  const configured = { value: options }
+  const roles = (): ConnectionRole[] => ["classifier", ...(configured.value.fallback ? ["fallback" as const] : [])]
   const records = new Map<ConnectionRole, SavedConnection>()
   const integrations = new Map<string, ConnectionRole>()
-  const original = (role: ConnectionRole) => (role === "classifier" ? options.model : options.fallback!.model)
-  const title = (role: ConnectionRole) => (role === "classifier" ? "Permission classifier" : "Permission chat fallback")
+  const original = (role: ConnectionRole) =>
+    role === "classifier" ? configured.value.model : configured.value.fallback!.model
+  const title = (role: ConnectionRole) =>
+    role === "classifier" ? "Primary permission reviewer" : "Permission chat fallback"
 
   yield* ctx.integration.transform((editor) => {
     integrations.forEach((role, id) => {
@@ -55,8 +62,13 @@ export const connections = Effect.fn(function* (ctx: Plugin.Context, options: ty
     })
   })
 
-  const refresh = Effect.fn(function* () {
-    const saved = yield* Effect.forEach(roles, (role) =>
+  const refresh = Effect.fn(function* (snapshot?: typeof Options.Type) {
+    const next = snapshot ?? (yield* read)
+    const changed =
+      JSON.stringify([configured.value.model, configured.value.fallback?.model]) !==
+      JSON.stringify([next.model, next.fallback?.model])
+    configured.value = next
+    const saved = yield* Effect.forEach(roles(), (role) =>
       ctx.storage.get(`connection/${role}`).pipe(
         Effect.flatMap((value) =>
           value === undefined ? Effect.succeed(undefined) : Schema.decodeUnknownEffect(SavedConnection)(value),
@@ -64,7 +76,9 @@ export const connections = Effect.fn(function* (ctx: Plugin.Context, options: ty
         Effect.map((record) => ({ role, record })),
       ),
     )
-    if (saved.every(({ role, record }) => JSON.stringify(records.get(role)) === JSON.stringify(record))) return
+    if (!changed && saved.every(({ role, record }) => JSON.stringify(records.get(role)) === JSON.stringify(record)))
+      return
+    records.clear()
     saved.forEach(({ role, record }) => {
       if (!record) {
         records.delete(role)
@@ -78,15 +92,15 @@ export const connections = Effect.fn(function* (ctx: Plugin.Context, options: ty
   })
   yield* refresh().pipe(Effect.orDie)
 
-  const model = Effect.fn(function* (role: ConnectionRole) {
-    yield* refresh()
+  const model = Effect.fn(function* (role: ConnectionRole, snapshot?: typeof Options.Type) {
+    yield* refresh(snapshot)
     const ref = original(role)
     const record = records.get(role)
     return record ? Model.Ref.make({ ...ref, providerID: Provider.ID.make(record.providerID) }) : ref
   })
   const list = Effect.fn(function* () {
     yield* refresh()
-    return yield* Effect.forEach(roles, (role) =>
+    return yield* Effect.forEach(roles(), (role) =>
       Effect.gen(function* () {
         const ref = original(role)
         const record = records.get(role)
@@ -111,7 +125,8 @@ export const connections = Effect.fn(function* (ctx: Plugin.Context, options: ty
     )
   })
   const set = Effect.fn(function* (input: ConnectionInput) {
-    if (!roles.includes(input.role)) return yield* Effect.fail(new Error("Configure a fallback model first"))
+    yield* refresh()
+    if (!roles().includes(input.role)) return yield* Effect.fail(new Error("Configure a fallback model first"))
     if (input.url === undefined) {
       yield* ctx.storage.remove(`connection/${input.role}`)
       return yield* list()

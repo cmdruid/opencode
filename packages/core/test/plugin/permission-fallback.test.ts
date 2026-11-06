@@ -64,27 +64,30 @@ it.live("fallback settings persist per session, default to shadow, and preserve 
     expect(calls).toEqual([])
     expect((yield* permission.get(empty.id))?.message).toContain("No user task or saved session approval")
     yield* addUserTask(session.id, "Inspect this checkout")
-    expect((yield* client.get({ sessionID: session.id })).fallback).toMatchObject({ mode: "shadow", timeoutMs: 10_000 })
+    expect((yield* client.session({ sessionID: session.id })).fallback).toMatchObject({
+      mode: "shadow",
+      timeoutMs: 10_000,
+    })
     expect((yield* permission.ask(request)).effect).toBe("ask")
     expect((yield* client.history({ sessionID: session.id })).find((entry) => entry.fallback)).toMatchObject({
       decision: "escalate",
       fallback: { mode: "shadow", applied: false, decision: "approve" },
     })
-    yield* client.setFallback({ sessionID: session.id, mode: "auto" })
+    yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "auto" } })
     expect((yield* permission.ask(request)).effect).toBe("allow")
     expect((yield* client.history({ sessionID: session.id })).some((entry) => entry.fallback?.applied)).toBe(true)
     const reopened = yield* PluginHost.make(plugins, reviewer.id)
     expect(yield* reopened.storage.get(`fallback/${session.id}`)).toBe("auto")
     const child = yield* host.session.create({ title: "Child", parentID: session.id })
-    expect((yield* client.get({ sessionID: child.id })).fallback?.mode).toBe("shadow")
-    yield* client.set({ sessionID: session.id, mode: "shadow" })
+    expect((yield* client.session({ sessionID: child.id })).fallback?.mode).toBe("shadow")
+    yield* client.setSession({ sessionID: session.id, change: { type: "reviewer", mode: "shadow" } })
     expect((yield* permission.ask(request)).effect).toBe("ask")
-    yield* client.set({ sessionID: session.id, mode: "auto" })
-    yield* client.setFallback({ sessionID: session.id, mode: "off" })
+    yield* client.setSession({ sessionID: session.id, change: { type: "reviewer", mode: "auto" } })
+    yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "off" } })
     calls.length = 0
     expect((yield* permission.ask(request)).effect).toBe("ask")
     expect(calls).toEqual(["classifier"])
-    yield* client.setFallback({ sessionID: session.id, mode: "auto" })
+    yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "auto" } })
     yield* host.session.update({
       sessionID: session.id,
       permissions: [{ action: "shell", resource: "*", effect: "deny" }],

@@ -35,6 +35,16 @@
     "@opencode/simulation#typecheck:tsc": {
       "dependsOn": ["transit", "@opencode/core#typecheck:tsc"]
     },
+    "@opencode/tui#transit": {
+      "dependsOn": ["^transit"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/plugins/permission-review/settings-ui.tsx",
+        "$TURBO_ROOT$/packages/plugins/permission-review/settings.fixture.ts",
+        "$TURBO_ROOT$/packages/plugins/permission-review/settings.ts",
+        "$TURBO_ROOT$/packages/plugins/permission-review/contract.ts"
+      ]
+    },
     "@opencode/tui#typecheck:tsc": {
       "dependsOn": ["transit", "@opencode/core#typecheck:tsc"]
     },

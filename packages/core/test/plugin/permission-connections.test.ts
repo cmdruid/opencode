@@ -203,7 +203,9 @@ it.live("custom chat endpoint uses its stored key and keeps the configured model
       fallback: { applied: true, mode: "auto" },
       decision: "approve",
     })
-    yield* test.host.rpc(Contract).setConnection({ role: "classifier", url: `${server.url}v1`, apiKey: "" })
+    yield* test.host
+      .rpc(Contract)
+      .saveSettings({ patch: {}, connection: { role: "classifier", url: `${server.url}v1`, apiKey: "" } })
     expect((yield* permission.ask({ sessionID: session.id, action: "shell", resources: ["git status"] })).effect).toBe(
       "allow",
     )

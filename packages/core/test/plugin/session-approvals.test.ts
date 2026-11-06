@@ -65,7 +65,7 @@ it.live("Allow Session records only the server's pending request and still revie
     const plugins = yield* Plugin.Service
     const reopened = yield* PluginHost.make(plugins, reviewer.id)
     expect(yield* reopened.storage.get(`approval/${test.session.id}/${pending.id}`)).toEqual(approval)
-    yield* test.client.set({ sessionID: test.session.id, mode: "auto" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reviewer", mode: "auto" } })
     expect((yield* test.permission.ask(test.request)).effect).toBe("ask")
     expect(test.prompts).toHaveLength(1)
     const evidence = JSON.parse(test.prompts[0].split("Evidence (JSON):\n")[1])
@@ -102,7 +102,7 @@ it.live("ordinary replies, model assessments, stale and foreign requests cannot 
     ).toBe(true)
     expect(yield* test.client.approvals({ sessionID: test.session.id })).toEqual([])
     yield* addUserTask(test.session.id, "Inspect service-x on node-a")
-    yield* test.client.set({ sessionID: test.session.id, mode: "auto" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reviewer", mode: "auto" } })
     yield* test.permission.ask(test.request)
     expect(test.prompts).toHaveLength(1)
     expect(yield* test.client.approvals({ sessionID: test.session.id })).toEqual([])
@@ -122,7 +122,7 @@ it.live("remembered examples stay session-local and configured denials still win
       permissions: [{ action: "*", resource: "*", effect: "ask" }],
     })
     yield* addUserTask(child.id, "Inspect service-x on node-a")
-    yield* test.client.set({ sessionID: child.id, mode: "auto" })
+    yield* test.client.setSession({ sessionID: child.id, change: { type: "reviewer", mode: "auto" } })
     yield* test.permission.ask({ ...test.request, sessionID: child.id })
     expect(test.prompts[0]).not.toContain('"sessionApprovals"')
     expect(yield* test.client.approvals({ sessionID: child.id })).toEqual([])
@@ -130,7 +130,7 @@ it.live("remembered examples stay session-local and configured denials still win
       sessionID: test.session.id,
       permissions: [{ action: "shell", resource: "*", effect: "deny" }],
     })
-    yield* test.client.set({ sessionID: test.session.id, mode: "auto" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reviewer", mode: "auto" } })
     expect((yield* test.permission.ask(test.request)).effect).toBe("deny")
     expect(test.prompts).toHaveLength(1)
     yield* test.permission.close

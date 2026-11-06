@@ -8,5 +8,5 @@
     "jsx": "preserve",
     "jsxImportSource": "@opentui/solid"
   },
-  "include": ["*.ts", "*.tsx"]
+  "include": ["*.ts", "*.tsx", "script/*.ts"]
 }

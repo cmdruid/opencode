@@ -1,329 +1,256 @@
-import { expect, test } from "bun:test"
-import { InputRenderable, TextareaRenderable } from "@opentui/core"
+import { createSignal } from "solid-js"
 import { Schema } from "effect"
-import { createAppFixture } from "../../tui/test/fixture/app"
-import { directory, json } from "../../tui/test/fixture/tui-client"
-import { FallbackMode, Preset, type ReviewMode } from "./contract"
+import { Assessment, SessionApproval } from "./contract"
+import { expect, test } from "bun:test"
+import { testRender } from "@opentui/solid"
+import { parseThemeDocument, resolveThemeDocument } from "@opencode/theme/tui"
+import themeSource from "../../tui/src/theme/assets/v2/opencode2.json"
+import { PermissionSettings } from "./settings-ui"
+import { settingsFixture } from "./settings.fixture"
 
-async function fixture(
-  options: {
-    auto?: boolean
-    autoaccept?: boolean
-    fail?: boolean
-    home?: boolean
-    createFail?: boolean
-    fallback?: boolean
-  } = {},
-) {
-  const session = {
-    id: "ses_permissions_ui",
-    title: "Permissions UI",
-    projectID: "proj_test",
-    location: { directory },
-    cost: 0,
-    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    time: { created: 0, updated: 0 },
-  }
-  const updates: Preset[] = []
-  const fallbackUpdates: FallbackMode[] = []
-  const created: unknown[] = []
-  const submissions: string[] = []
-  const state = {
-    preset: "configured" as Preset,
-    mode: "manual" as ReviewMode,
-    model: { providerID: "test", id: "reviewer" },
-    ...(options.fallback
-      ? {
-          fallback: {
-            model: { providerID: "maple", id: "gpt-oss-120b", variant: "permission-review" },
-            mode: "shadow" as FallbackMode,
-            timeoutMs: 10000,
-          },
-        }
-      : {}),
-  }
-  const setup = await createAppFixture({
-    width: 112,
-    height: 36,
-    args: { sessionID: options.home ? undefined : session.id, auto: options.auto },
-    config: {
-      animations: false,
-      tabs: { enabled: false },
-      session: { permissions: options.autoaccept ? "autoaccept" : "prompt" },
-      plugins: [import.meta.dir],
-    },
-    fetch: async (url, request) => {
-      if (request.method === "POST" && !url.pathname.startsWith("/api/rpc/")) submissions.push(url.pathname)
-      if (url.pathname === "/api/session" && request.method === "POST") {
-        if (options.createFail) return new Response("Fixture session creation failure", { status: 500 })
-        created.push(await request.json())
-        return json({ data: session })
-      }
-      if (url.pathname === "/api/session")
-        return json({ data: options.home && !created.length ? [] : [session], cursor: {} })
-      if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
-      if (url.pathname === `/api/session/${session.id}/message`) return json({ data: [], cursor: {} })
-      if (url.pathname === `/api/session/${session.id}/inbox`) return json({ data: [] })
-      if (url.pathname === "/api/rpc/opencode.permission-review/get") return json({ output: state })
-      if (url.pathname === "/api/rpc/opencode.permission-review/setFallback") {
-        const body = Schema.decodeUnknownSync(
-          Schema.Struct({ input: Schema.Struct({ sessionID: Schema.String, mode: FallbackMode }) }),
-        )(await request.json())
-        expect(body.input.sessionID).toBe(session.id)
-        if (!state.fallback) throw new Error("Missing fixture fallback")
-        state.fallback.mode = body.input.mode
-        fallbackUpdates.push(body.input.mode)
-        return json({ output: state })
-      }
-      if (url.pathname === "/api/rpc/opencode.permission-review/set") {
-        expect(await request.json()).toMatchObject({ input: { sessionID: session.id, mode: "shadow" } })
-        state.preset = "shadow"
-        state.mode = "shadow"
-        updates.push("shadow")
-        setup.events.emit({
-          id: "evt_shadow",
-          created: updates.length,
-          type: "rpc.opencode.permission-review.changed",
-          location: { directory },
-          data: { sessionID: session.id, state },
-        })
-        return json({ output: state })
-      }
-      if (url.pathname === "/api/rpc/opencode.permission-review/select") {
-        if (options.fail) return new Response("Fixture RPC failure", { status: 500 })
-        const body = Schema.decodeUnknownSync(
-          Schema.Struct({ input: Schema.Struct({ sessionID: Schema.String, preset: Preset }) }),
-        )(await request.json())
-        expect(body.input.sessionID).toBe(session.id)
-        updates.push(body.input.preset)
-        state.preset = body.input.preset
-        state.mode = state.preset === "auto" || state.preset === "shadow" ? state.preset : "manual"
-        setup.events.emit({
-          id: `evt_preset_${updates.length}`,
-          created: updates.length,
-          type: "rpc.opencode.permission-review.changed",
-          location: { directory },
-          data: { sessionID: session.id, state },
-        })
-        return json({ output: state })
-      }
-    },
-  })
-  return { ...setup, updates, fallbackUpdates, created, submissions }
-}
-
-async function open(setup: Awaited<ReturnType<typeof fixture>>) {
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof TextareaRenderable)
-  await setup.mockInput.typeText("/permissions")
-  await setup.waitForFrame((frame) => frame.includes("Choose permissions"))
-  setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => frame.includes("Permissions — this session"))
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-}
-
-async function choose(setup: Awaited<ReturnType<typeof fixture>>, label: string) {
-  await setup.mockInput.typeText(label)
-  await setup.waitForFrame((frame) => frame.includes(label))
-  setup.mockInput.pressEnter()
-}
-
-for (const settings of [false, true]) {
-  test(`home-screen /permissions opens ${settings ? "settings" : "presets"} in one empty session`, async () => {
-    await using setup = await fixture({ home: true })
-    await setup.ready
-    expect(setup.created).toEqual([])
-    await open(setup)
-    expect(setup.created).toMatchObject([{ location: { directory } }])
-    if (settings) {
-      await choose(setup, "Settings")
-      await setup.waitForFrame((frame) => frame.includes("Permission settings"))
-      await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-      expect(setup.updates).toEqual([])
-      await choose(setup, "Reviewer mode")
-      await setup.waitForFrame((frame) => frame.includes("Reviewer mode — this session"))
-      await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-    }
-    await choose(setup, settings ? "Shadow" : "Read only")
-    await setup.waitForFrame((frame) => frame.includes(`permissions: ${settings ? "Shadow" : "Read only"}`))
-    expect(setup.updates).toEqual([settings ? "shadow" : "read-only"])
-    expect(setup.submissions).toEqual(["/api/session"])
-    await open(setup)
-    expect(setup.created).toHaveLength(1)
-  })
-}
-
-test("chat fallback is managed through Settings without changing the preset or reviewer", async () => {
-  await using setup = await fixture({ fallback: true })
-  await setup.ready
-  for (const mode of ["Automatic", "Off", "Shadow"]) {
-    await open(setup)
-    await choose(setup, "Settings")
-    await setup.waitForFrame((frame) => frame.includes("Permission settings"))
-    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-    await choose(setup, "Chat fallback")
-    await setup.waitForFrame((frame) => frame.includes("Chat fallback — this session"))
-    await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-    setup.resize(58, 30)
-    await setup.renderOnce()
-    expect(setup.captureCharFrame()).toContain("Automatic")
-    await choose(setup, mode)
-    await setup.waitForFrame((frame) => frame.includes(`Chat fallback: ${mode}`))
-    setup.resize(112, 36)
-    await setup.renderOnce()
-  }
-  expect(setup.fallbackUpdates).toEqual(["auto", "off", "shadow"])
-  expect(setup.updates).toEqual([])
-  expect(setup.submissions).toEqual([])
-})
-
-test("an unconfigured fallback explains setup without changing anything", async () => {
-  await using setup = await fixture()
-  await setup.ready
-  await open(setup)
-  await choose(setup, "Settings")
-  await setup.waitForFrame((frame) => frame.includes("Permission settings"))
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-  await choose(setup, "Chat fallback")
-  await setup.waitForFrame((frame) => frame.includes("Configure a fallback model"))
-  expect(setup.fallbackUpdates).toEqual([])
-  expect(setup.updates).toEqual([])
-})
-
-test("home-screen session creation failure shows an error without opening a selector", async () => {
-  await using setup = await fixture({ home: true, createFail: true })
-  await setup.ready
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof TextareaRenderable)
-  await setup.mockInput.typeText("/permissions")
-  await setup.waitForFrame((frame) => frame.includes("Choose permissions and approval handling"))
-  setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => frame.includes("UnexpectedStatus: 500"))
-  expect(setup.captureCharFrame()).not.toContain("Permissions — this session")
-  expect(setup.created).toEqual([])
-  expect(setup.updates).toEqual([])
-})
-
-test("/permissions opens the real selector, changes modes, shows the active preset and fits a narrow terminal", async () => {
-  await using setup = await fixture()
-  await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("review: Manual"))
-  await open(setup)
-  expect(setup.captureCharFrame()).toContain("Read only")
-  expect(setup.captureCharFrame()).toContain("Ask for approval")
-  expect(setup.captureCharFrame()).toContain("Approve for me")
-  expect(setup.captureCharFrame()).toContain("Full access")
-  expect(setup.captureCharFrame()).toContain("Settings")
-  expect(setup.captureCharFrame()).toContain("shell/network")
-  expect(setup.captureCharFrame()).not.toContain("Configured rules")
-  expect(setup.captureCharFrame()).not.toContain("Shadow")
-  setup.resize(58, 30)
-  await setup.renderOnce()
-  expect(setup.captureCharFrame()).toContain("Ask for approval")
-  await choose(setup, "Read only")
-  await setup.waitForFrame(
-    (frame) =>
-      frame.includes("permissions:") && frame.includes("Read only") && !frame.includes("Permissions — this session"),
+async function fixture(width = 112) {
+  const data = settingsFixture()
+  const closed = { value: false }
+  const [revision, setRevision] = createSignal(0)
+  const app = await testRender(
+    () => (
+      <PermissionSettings
+        theme={resolveThemeDocument(parseThemeDocument(themeSource), "dark")}
+        actions={data.actions}
+        revision={revision()}
+        onClose={() => {
+          closed.value = true
+        }}
+      />
+    ),
+    { width, height: 36, kittyKeyboard: true },
   )
-  setup.resize(112, 36)
-  await setup.renderOnce()
-  for (const label of ["Ask for approval", "Approve for me"]) {
-    await open(setup)
-    await choose(setup, label)
-    await setup.waitForFrame((frame) => frame.includes(`permissions: ${label}`))
-  }
-  await open(setup)
-  await choose(setup, "Settings")
-  await setup.waitForFrame((frame) => frame.includes("Permission settings"))
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-  await choose(setup, "Reviewer mode")
-  await setup.waitForFrame((frame) => frame.includes("Reviewer mode — this session"))
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-  await choose(setup, "Shadow")
-  await setup.waitForFrame((frame) => frame.includes("permissions: Shadow"))
-  expect(setup.updates).toEqual(["read-only", "workspace", "auto", "shadow"])
-  await open(setup)
-  setup.mockInput.pressKey("i", { ctrl: true })
-  await setup.waitForFrame((frame) => frame.includes("Active permissions"))
-  expect(setup.captureCharFrame()).toContain("Preset: Ask for approval")
-  expect(setup.captureCharFrame()).toContain("Reviewer: Shadow")
-  expect(setup.captureCharFrame()).toContain("test/reviewer")
-  expect(setup.captureCharFrame()).toContain("not an OS sandbox")
-})
-
-test("full access requires a second selection that defaults to cancel and explains configured approval rules remain", async () => {
-  await using setup = await fixture()
-  await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("review: Manual"))
-  await open(setup)
-  await choose(setup, "Full access")
-  await setup.waitForFrame((frame) => frame.includes("Enable full access?"))
-  expect(setup.captureCharFrame()).toContain("Keep configured approval rules")
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-  setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => !frame.includes("Enable full access?"))
-  expect(setup.updates).toEqual([])
-  await open(setup)
-  await choose(setup, "Full access")
-  await setup.waitForFrame((frame) => frame.includes("Enable full access?"))
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-  setup.mockInput.pressArrow("down")
-  setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => frame.includes("permissions: Full access"))
-  expect(setup.updates).toEqual(["full"])
-  await open(setup)
-  expect(setup.captureCharFrame()).not.toContain("Configured rules")
-  expect(setup.captureCharFrame()).toContain("Configured limits still apply")
-})
-
-for (const options of [{ auto: true }, { autoaccept: true }]) {
-  test(`auto accept from ${options.auto ? "--auto" : "settings"} prevents a misleading manual preset`, async () => {
-    await using setup = await fixture(options)
-    await setup.ready
-    await setup.waitForFrame((frame) => frame.includes("permissions: client auto accept"))
-    for (const label of ["Ask for approval", "Full access"]) {
-      await open(setup)
-      await choose(setup, label)
-      await setup.waitForFrame((frame) => frame.includes("Turn off auto accept"))
-      expect(setup.captureCharFrame()).toContain("restart without it")
-      expect(setup.updates).toEqual([])
-      setup.mockInput.pressEnter()
-      await setup.waitForFrame((frame) => !frame.includes("Turn off auto accept"))
+  const ready = async () => {
+    for (let i = 0; i < 20; i++) {
+      await Promise.resolve()
+      await app.renderOnce()
+      if (!app.captureCharFrame().includes("Loading…")) return
     }
-  })
+    throw new Error(app.captureCharFrame())
+  }
+  await ready()
+  const open = async (name: string) => {
+    app.mockInput.pressKey("u", { ctrl: true })
+    await app.mockInput.typeText(name)
+    await app.renderOnce()
+    app.mockInput.pressEnter()
+    await ready()
+  }
+  const back = async () => {
+    app.mockInput.pressEscape()
+    await ready()
+  }
+  const submit = async () => {
+    app.mockInput.pressKey("s", { ctrl: true })
+    await ready()
+  }
+  return {
+    app,
+    data,
+    closed,
+    ready,
+    refresh: async () => {
+      setRevision((value) => value + 1)
+      await ready()
+    },
+    open,
+    back,
+    submit,
+    async [Symbol.asyncDispose]() {
+      app.renderer.destroy()
+    },
+  }
 }
 
-test("a failed selection displays an error and keeps the previous permissions", async () => {
-  await using setup = await fixture({ fail: true })
-  await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("review: Manual"))
-  await open(setup)
-  await choose(setup, "Read only")
-  await setup.waitForFrame(
-    (frame) => frame.includes("Permission review") && !frame.includes("Permissions — this session"),
-  )
-  expect(setup.captureCharFrame()).toContain("review: Manual")
-  expect(setup.updates).toEqual([])
+test.each([44, 112])(
+  "settings overview and long values fit at %s columns without creating a session",
+  async (width) => {
+    await using f = await fixture(width)
+    await f.open("Settings")
+    expect(f.app.captureCharFrame()).toContain("Permission settings")
+    expect(f.app.captureCharFrame()).toContain("Primary reviewer")
+    expect(f.data.fixture.session).toBeUndefined()
+    await f.open("Primary reviewer")
+    expect(f.app.captureCharFrame()).toContain("All sessions on this server")
+    expect(f.app.captureCharFrame()).toContain("fixture/classifier")
+    await f.back()
+    expect(f.app.captureCharFrame()).toContain("Filter: Primary reviewer")
+    await f.back()
+    expect(f.closed.value).toBe(false)
+    await f.back()
+    expect(f.closed.value).toBe(true)
+  },
+)
+
+test("editor preserves a failed draft, saves to its parent, and cancels without writes", async () => {
+  await using f = await fixture()
+  await f.open("Settings")
+  await f.open("Review policy")
+  await f.open("Additional instructions")
+  await f.app.mockInput.typeText("Only the requested effects")
+  f.data.fixture.failure = "Fixture save failed"
+  await f.submit()
+  expect(f.app.captureCharFrame()).toContain("Fixture save failed")
+  expect(f.app.captureCharFrame()).toContain("Only the requested effects")
+  expect(f.data.fixture.writes).toEqual([])
+  f.data.fixture.failure = ""
+  await f.submit()
+  expect(f.app.captureCharFrame()).toContain("Review policy")
+  expect(f.data.fixture.writes).toEqual([{ patch: { policy: "Only the requested effects" } }])
+  await f.open("Additional instructions")
+  await f.app.mockInput.typeText("Discard me")
+  await f.back()
+  expect(f.data.fixture.writes).toHaveLength(1)
+  await f.open("Use configured values")
+  expect(f.data.fixture.writes[1]).toEqual({ patch: {}, reset: ["defaultMode", "actions", "policy"] })
 })
 
-test("settings can be cancelled or inspected with auto accept without changing permissions", async () => {
-  await using setup = await fixture({ autoaccept: true })
-  await setup.ready
-  await setup.waitForFrame((frame) => frame.includes("permissions: client auto accept"))
-  await open(setup)
-  await choose(setup, "Settings")
-  await setup.waitForFrame((frame) => frame.includes("Permission settings"))
-  expect(setup.updates).toEqual([])
-  setup.resize(58, 30)
-  await setup.renderOnce()
-  for (const title of ["Reviewer mode", "Session approvals", "Review history", "Active permissions"])
-    expect(setup.captureCharFrame()).toContain(title)
-  setup.mockInput.pressEscape()
-  await setup.waitForFrame((frame) => !frame.includes("Permission settings"))
-  expect(setup.updates).toEqual([])
-  await open(setup)
-  await choose(setup, "Settings")
-  await setup.waitForFrame((frame) => frame.includes("Permission settings"))
-  await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
-  await choose(setup, "Active permissions")
-  await setup.waitForFrame((frame) => frame.includes("Reviewer: Manual"))
-  expect(setup.updates).toEqual([])
+test("backend and model save together, second-opinion setup includes its variant", async () => {
+  await using f = await fixture()
+  await f.open("Settings")
+  await f.open("Primary reviewer")
+  await f.open("Backend")
+  await f.open("Chat")
+  expect(f.data.fixture.writes).toEqual([])
+  await f.open("fixture/chat")
+  expect(f.app.captureCharFrame()).toContain("Primary reviewer")
+  expect(f.data.fixture.writes[0]).toMatchObject({
+    patch: { mode: "chat", model: { providerID: "fixture", id: "chat" } },
+  })
+  await f.back()
+  await f.open("Second opinion")
+  expect(f.app.captureCharFrame()).toContain("Inactive with a chat primary")
+  await f.open("Model and variant")
+  await f.open("fixture/chat")
+  await f.open("bounded")
+  expect(f.data.fixture.writes[1]).toMatchObject({ patch: { fallback: { model: { id: "chat", variant: "bounded" } } } })
+})
+
+test("connection is a single draft; changing an endpoint cannot keep its saved key", async () => {
+  await using f = await fixture()
+  f.data.fixture.connection.custom = true
+  f.data.fixture.connection.authenticated = true
+  await f.open("Settings")
+  await f.open("Primary reviewer")
+  await f.open("Connection")
+  await f.open("Base URL")
+  await f.app.mockInput.typeText("/new")
+  await f.submit()
+  expect(f.data.fixture.writes).toEqual([])
+  await f.open("Save connection")
+  expect(f.app.captureCharFrame()).toContain("Endpoint changed")
+  await f.open("Authentication")
+  await f.open("No API key")
+  await f.open("Save connection")
+  expect(f.data.fixture.writes[0]).toMatchObject({ patch: {}, connection: { role: "classifier", apiKey: "" } })
+  await f.open("Connection")
+  await f.open("Authentication")
+  await f.open("Set API key")
+  await f.open("API key")
+  await f.app.mockInput.typeText("discarded-secret")
+  await f.submit()
+  await f.open("Cancel")
+  expect(f.data.fixture.writes).toHaveLength(1)
+})
+
+test("numeric and policy controls bind to their server fields, including all versus no actions", async () => {
+  await using f = await fixture()
+  await f.open("Settings")
+  await f.open("Primary reviewer")
+  await f.open("Confidence threshold")
+  f.app.mockInput.pressKey("a", { ctrl: true })
+  f.app.mockInput.pressKey("k", { ctrl: true })
+  await f.app.mockInput.typeText("2")
+  await f.submit()
+  expect(f.data.fixture.writes).toHaveLength(0)
+  await f.back()
+  await f.back()
+  await f.open("Second opinion")
+  await f.open("Default mode")
+  await f.open("Automatic")
+  expect(f.data.fixture.writes.at(-1)?.patch.fallback).toMatchObject({ mode: "auto" })
+  await f.open("Timeout (ms)")
+  f.app.mockInput.pressKey("a", { ctrl: true })
+  f.app.mockInput.pressKey("k", { ctrl: true })
+  await f.app.mockInput.typeText("500")
+  await f.submit()
+  expect(f.data.fixture.writes.at(-1)?.patch.fallback).toMatchObject({ timeoutMs: 500 })
+  await f.open("Remove second opinion")
+  expect(f.data.fixture.writes.at(-1)?.patch.fallback).toBeNull()
+  await f.back()
+  await f.open("Review policy")
+  await f.open("Default reviewer mode")
+  await f.open("Manual")
+  expect(f.data.fixture.writes.at(-1)?.patch.defaultMode).toBe("manual")
+  await f.open("Reviewed actions")
+  await f.open("Choose action names")
+  f.app.mockInput.pressKey("a", { ctrl: true })
+  f.app.mockInput.pressKey("k", { ctrl: true })
+  await f.submit()
+  expect(f.data.fixture.writes.at(-1)?.patch.actions).toEqual([])
+  await f.open("Reviewed actions")
+  await f.open("All actions")
+  expect(f.data.fixture.writes.at(-1)?.patch.actions).toBeNull()
+  await f.open("Reviewed actions")
+  await f.open("Common actions")
+  await f.open("read")
+  await f.open("Save actions")
+  expect(f.data.fixture.writes.at(-1)?.patch.actions).not.toContain("read")
+})
+
+test("activity details return to their lists and revocation updates the local list", async () => {
+  await using f = await fixture()
+  await f.data.actions.change({ type: "preset", preset: "workspace" })
+  f.data.fixture.history.push(
+    Schema.decodeUnknownSync(Assessment)({
+      requestID: "per_fixture",
+      sessionID: "ses_fixture",
+      action: "shell",
+      resources: ["git status"],
+      model: { providerID: "fixture", id: "chat" },
+      mode: "chat",
+      shadow: true,
+      at: 1,
+      durationMs: 3,
+      decision: "approve",
+      reason: "Read-only inspection of the requested project.",
+    }),
+  )
+  f.data.fixture.approvals.push(
+    Schema.decodeUnknownSync(SessionApproval)({
+      requestID: "per_fixture",
+      sessionID: "ses_fixture",
+      action: "shell",
+      resources: ["git status"],
+      directory: "/fixture",
+      toolCalls: [],
+      at: 1,
+    }),
+  )
+  await f.refresh()
+  expect(f.app.captureCharFrame()).not.toContain("new session")
+  await f.open("Settings")
+  await f.open("Activity")
+  await f.open("Review history")
+  await f.open("approve")
+  expect(f.app.captureCharFrame()).toContain("Shadow proposal")
+  expect(f.app.captureCharFrame()).toContain("not whether the tool executed")
+  await f.back()
+  expect(f.app.captureCharFrame()).toContain("Review history")
+  await f.back()
+  await f.open("Remembered approvals")
+  await f.open("shell")
+  await f.open("Details")
+  expect(f.app.captureCharFrame()).toContain("git status")
+  await f.back()
+  expect(f.app.captureCharFrame()).toContain("Remembered approvals")
+  await f.open("shell")
+  await f.open("Revoke approval")
+  expect(f.app.captureCharFrame()).toContain("No entries.")
+  expect(f.data.fixture.approvals).toEqual([])
 })

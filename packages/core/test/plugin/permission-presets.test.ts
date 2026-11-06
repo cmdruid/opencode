@@ -48,8 +48,13 @@ for (const preset of ["configured", "read-only", "workspace", "auto", "shadow", 
   it.live(`${preset} evaluates real permissions without running tools or calling a reviewer for probes`, () =>
     Effect.gen(function* () {
       const test = yield* setup
-      yield* test.client.select({ sessionID: test.session.id, preset })
-      expect(Schema.is(Schema.Json)(yield* test.client.get({ sessionID: test.session.id }))).toBe(true)
+      if (preset === "configured" || preset === "shadow")
+        yield* test.host.storage.set(`selection/${test.session.id}`, {
+          preset,
+          mode: preset === "shadow" ? "shadow" : "manual",
+        })
+      else yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset } })
+      expect(Schema.is(Schema.Json)(yield* test.client.session({ sessionID: test.session.id }))).toBe(true)
       for (const item of [
         { action: "read", resources: ["README.md"], expected: true },
         { action: "read", resources: [path.join(test.host.location.directory, "README.md")], expected: true },
@@ -86,13 +91,13 @@ it.live("manual, automatic and shadow presets route actual requests; switching l
   Effect.gen(function* () {
     const test = yield* setup
     const request = { sessionID: test.session.id, action: "shell", resources: ["bun test"], save: ["*"] }
-    yield* test.client.select({ sessionID: test.session.id, preset: "workspace" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset: "workspace" } })
     const manual = yield* test.permission.ask(request)
     expect(manual.effect).toBe("ask")
     expect(test.calls).toHaveLength(0)
-    yield* test.client.select({ sessionID: test.session.id, preset: "auto" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset: "auto" } })
     expect((yield* test.permission.ask(request)).effect).toBe("allow")
-    yield* test.client.select({ sessionID: test.session.id, preset: "shadow" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reviewer", mode: "shadow" } })
     const shadow = yield* test.permission.ask(request)
     expect(shadow.effect).toBe("ask")
     expect((yield* test.permission.get(shadow.id))?.message).toContain("Shadow review suggests approve")
@@ -102,7 +107,7 @@ it.live("manual, automatic and shadow presets route actual requests; switching l
     expect(test.calls).toHaveLength(2)
     const saved = yield* PermissionSaved.Service
     expect(yield* saved.list()).toHaveLength(0)
-    yield* test.client.select({ sessionID: test.session.id, preset: "full" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset: "full" } })
     expect((yield* test.permission.ask(request)).effect).toBe("allow")
     expect(yield* test.permission.get(manual.id)).toBeDefined()
     expect(yield* test.permission.get(shadow.id)).toBeDefined()
@@ -133,7 +138,7 @@ it.live("configured denials survive full access and saved grants cannot bypass a
         { action: "read", resource: "*.env", effect: "ask" },
       ],
     })
-    yield* test.client.select({ sessionID: test.session.id, preset: "workspace" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset: "workspace" } })
     expect(
       (yield* test.permission.ask({ sessionID: test.session.id, action: "read", resources: ["secrets.env"] })).effect,
     ).toBe("ask")
@@ -141,7 +146,7 @@ it.live("configured denials survive full access and saved grants cannot bypass a
       (yield* test.permission.ask({ sessionID: test.session.id, action: "shell", resources: ["git clean -fdx"] }))
         .effect,
     ).toBe("ask")
-    yield* test.client.select({ sessionID: test.session.id, preset: "full" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset: "full" } })
     expect(
       (yield* test.permission.ask({ sessionID: test.session.id, action: "shell", resources: ["git push origin dev"] }))
         .effect,
@@ -164,7 +169,12 @@ it.live("all presets preserve effective asks and denials; only review can approv
       ],
     })
     for (const preset of ["configured", "read-only", "workspace", "auto", "shadow", "full"] as const) {
-      yield* test.client.select({ sessionID: test.session.id, preset })
+      if (preset === "configured" || preset === "shadow")
+        yield* test.host.storage.set(`selection/${test.session.id}`, {
+          preset,
+          mode: preset === "shadow" ? "shadow" : "manual",
+        })
+      else yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset } })
       const before = test.calls.length
       const request = { sessionID: test.session.id, action: "shell", resources: ["deploy production"] }
       expect(yield* test.permission.allows(request)).toBe(false)
@@ -187,11 +197,11 @@ it.live("changing the reviewer preserves the selected scope, including Shadow te
   Effect.gen(function* () {
     const test = yield* setup
     for (const preset of ["read-only", "workspace", "full"] as const) {
-      yield* test.client.select({ sessionID: test.session.id, preset })
+      yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset } })
       for (const mode of ["shadow", "auto", "manual"] as const) {
-        const next = yield* test.client.set({ sessionID: test.session.id, mode })
+        const next = yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reviewer", mode } })
         expect(next).toMatchObject({
-          preset: preset === "workspace" && mode !== "manual" ? mode : preset,
+          preset,
           mode,
         })
         expect(
@@ -212,9 +222,9 @@ it.live("presets persist, inherit through subagents, isolate unrelated sessions 
     const child = yield* test.host.session.create({ parentID: test.session.id })
     const grandchild = yield* test.host.session.create({ parentID: child.id })
     const other = yield* test.host.session.create({ title: "Unrelated" })
-    yield* test.client.select({ sessionID: test.session.id, preset: "read-only" })
-    expect(Schema.is(Schema.Json)(yield* test.client.get({ sessionID: grandchild.id }))).toBe(true)
-    expect(yield* test.client.get({ sessionID: grandchild.id })).toMatchObject({
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "preset", preset: "read-only" } })
+    expect(Schema.is(Schema.Json)(yield* test.client.session({ sessionID: grandchild.id }))).toBe(true)
+    expect(yield* test.client.session({ sessionID: grandchild.id })).toMatchObject({
       preset: "read-only",
       mode: "manual",
       inheritedFrom: test.session.id,
@@ -222,26 +232,28 @@ it.live("presets persist, inherit through subagents, isolate unrelated sessions 
     expect(yield* test.permission.allows({ sessionID: grandchild.id, action: "edit", resources: ["index.ts"] })).toBe(
       false,
     )
-    expect((yield* test.client.get({ sessionID: other.id })).preset).toBe("configured")
+    expect((yield* test.client.session({ sessionID: other.id })).preset).toBe("configured")
     const plugins = yield* Plugin.Service
     const reopened = yield* PluginHost.make(plugins, reviewer.id)
     expect(yield* reopened.storage.get(`selection/${test.session.id}`)).toEqual({ preset: "read-only", mode: "manual" })
-    yield* test.client.select({ sessionID: child.id, preset: "workspace" })
-    expect(yield* test.client.get({ sessionID: grandchild.id })).toMatchObject({
+    yield* test.client.setSession({ sessionID: child.id, change: { type: "preset", preset: "workspace" } })
+    expect(yield* test.client.session({ sessionID: grandchild.id })).toMatchObject({
       preset: "workspace",
       inheritedFrom: child.id,
     })
-    yield* test.client.select({ sessionID: test.session.id, preset: "configured" })
+    yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reset", target: "selection" } })
     expect(
       yield* test.permission.allows({ sessionID: test.session.id, action: "shell", resources: ["rm -rf /"] }),
     ).toBe(true)
-    expect((yield* test.client.get({ sessionID: child.id })).preset).toBe("workspace")
+    expect((yield* test.client.session({ sessionID: child.id })).preset).toBe("workspace")
     const rpc = yield* Rpc.Service
     expect(
-      yield* rpc.call(Contract.id, "select", { sessionID: child.id, preset: "typo" }).pipe(Effect.flip),
+      yield* rpc
+        .call(Contract.id, "setSession", { sessionID: child.id, change: { type: "preset", preset: "typo" } })
+        .pipe(Effect.flip),
     ).toMatchObject({ type: "rpc.invalid_input" })
     yield* test.host.storage.set(`selection/${test.session.id}`, "invalid")
-    expect(yield* test.client.get({ sessionID: test.session.id })).toMatchObject({
+    expect(yield* test.client.session({ sessionID: test.session.id })).toMatchObject({
       preset: "read-only",
       mode: "manual",
     })

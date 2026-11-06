@@ -84,25 +84,27 @@ it.live("session review modes persist, stay local to the session, and leave manu
     })
     const client = host.rpc(Contract)
     // The generic HTTP RPC envelope encodes Schema.Json, including optional state fields.
-    expect(Schema.is(Schema.Json)(yield* client.get({ sessionID: session.id }))).toBe(true)
-    expect((yield* client.get({ sessionID: session.id })).mode).toBe("shadow")
-    yield* client.set({ sessionID: session.id, mode: "manual" })
+    expect(Schema.is(Schema.Json)(yield* client.session({ sessionID: session.id }))).toBe(true)
+    expect((yield* client.session({ sessionID: session.id })).mode).toBe("shadow")
+    yield* client.setSession({ sessionID: session.id, change: { type: "reviewer", mode: "manual" } })
     const request = { id: Permission.ID.create(), sessionID: session.id, action: "read", resources: ["README.md"] }
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result).toBeUndefined()
     expect(calls).toHaveLength(0)
-    yield* client.set({ sessionID: session.id, mode: "auto" })
-    expect(Schema.is(Schema.Json)(yield* client.get({ sessionID: session.id }))).toBe(true)
+    yield* client.setSession({ sessionID: session.id, change: { type: "reviewer", mode: "auto" } })
+    expect(Schema.is(Schema.Json)(yield* client.session({ sessionID: session.id }))).toBe(true)
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result?.decision).toBe("approve")
     expect(calls).toHaveLength(1)
-    expect((yield* client.get({ sessionID: other.id })).mode).toBe("shadow")
+    expect((yield* client.session({ sessionID: other.id })).mode).toBe("shadow")
     const reopened = yield* PluginHost.make(plugins, reviewer.id)
-    expect(yield* reopened.storage.get(`mode/${session.id}`)).toBe("auto")
+    expect(yield* reopened.storage.get(`selection/${session.id}`)).toMatchObject({ mode: "auto" })
     expect(
-      yield* rpc.call(Contract.id, "set", { sessionID: session.id, mode: "always" }).pipe(Effect.flip),
+      yield* rpc
+        .call(Contract.id, "setSession", { sessionID: session.id, change: { type: "reviewer", mode: "always" } })
+        .pipe(Effect.flip),
     ).toMatchObject({ type: "rpc.invalid_input" })
     yield* host.storage.set(`mode/${session.id}`, "corrupt")
     yield* host.storage.remove(`selection/${session.id}`)
-    expect((yield* client.get({ sessionID: session.id })).mode).toBe("manual")
+    expect((yield* client.session({ sessionID: session.id })).mode).toBe("manual")
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result).toBeUndefined()
     expect(calls).toHaveLength(1)
   }),

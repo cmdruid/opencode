@@ -8,6 +8,7 @@ import { sessionLocationMissingStory } from "./session-location-missing"
 import { oneCellSpinnerStory } from "./one-cell-spinner"
 import { linkClicksStory } from "./link-clicks"
 import { highlightsStory } from "./highlights"
+import { permissionSettingsStory } from "./permission-settings"
 import { todoStory } from "./todo"
 
 /**
@@ -28,6 +29,7 @@ const stories: Story[] = [
   linkClicksStory,
   highlightsStory,
   todoStory,
+  permissionSettingsStory,
 ]
 
 function Commands(props: { context: Plugin.Context }) {

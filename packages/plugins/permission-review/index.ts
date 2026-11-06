@@ -6,12 +6,19 @@ import type { AssertInput } from "@opencode/plugin/permission"
 import { Assessment, Contract, FallbackMode, ReviewMode, Selection, SessionApproval } from "./contract.js"
 import { Options, review } from "./review.js"
 import { connections } from "./connections.js"
+import { settings, reviewOptions } from "./settings.js"
 
 export default Plugin.define({
   id: "opencode.permission-review",
   effect: Effect.fn(function* (ctx) {
     const options = yield* Schema.decodeUnknownEffect(Options)(ctx.options).pipe(Effect.orDie)
-    const connection = yield* connections(ctx, options)
+    const config = settings(ctx, options)
+    const currentOptions = config.read.pipe(Effect.map((value) => reviewOptions(value.values)))
+    const connection = yield* connections(ctx, options, currentOptions)
+    const server = Effect.gen(function* () {
+      const value = yield* config.read
+      return { ...value, connections: yield* connection.list() }
+    })
     const approvals = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
       const entries: SessionApproval[] = []
       let after: string | undefined
@@ -27,12 +34,12 @@ export default Plugin.define({
       } while (after)
       return entries.toSorted((a, b) => b.at - a.at)
     })
-    const mode = Effect.fn(function* (sessionID: string) {
+    const mode = Effect.fn(function* (sessionID: string, values: typeof Options.Type) {
       const value = yield* ctx.storage.get(`mode/${sessionID}`)
-      if (value === undefined) return options.defaultMode ?? (options.shadow ? "shadow" : "auto")
+      if (value === undefined) return values.defaultMode ?? "auto"
       return Option.getOrElse(Schema.decodeUnknownOption(ReviewMode)(value), () => "manual" as const)
     })
-    const selection = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
+    const selection = Effect.fn(function* (sessionID: AssertInput["sessionID"], values: typeof Options.Type) {
       let session = yield* ctx.session.get({ sessionID }).pipe(Effect.orDie)
       while (true) {
         const value = yield* ctx.storage.get(`selection/${session.id}`)
@@ -47,39 +54,79 @@ export default Plugin.define({
         if (!session.parentID) break
         session = yield* ctx.session.get({ sessionID: session.parentID }).pipe(Effect.orDie)
       }
-      return { preset: "configured" as const, mode: yield* mode(sessionID) }
+      return { preset: "configured" as const, mode: yield* mode(sessionID, values) }
     })
-    const fallback = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
-      if (!options.fallback || options.mode !== "decision") return undefined
+    const fallback = Effect.fn(function* (sessionID: AssertInput["sessionID"], values: typeof Options.Type) {
+      if (!values.fallback || values.mode !== "decision") return undefined
       const value = yield* ctx.storage.get(`fallback/${sessionID}`)
       return {
-        model: yield* connection.model("fallback").pipe(Effect.orDie),
+        model: yield* connection.model("fallback", values).pipe(Effect.orDie),
         mode:
           value === undefined
-            ? (options.fallback.mode ?? "shadow")
+            ? (values.fallback.mode ?? "shadow")
             : Option.getOrElse(Schema.decodeUnknownOption(FallbackMode)(value), () => "off" as const),
-        timeoutMs: options.fallback.timeoutMs ?? 10_000,
+        timeoutMs: values.fallback.timeoutMs ?? 10_000,
       }
     })
     const state = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
-      const chat = yield* fallback(sessionID)
+      const configState = yield* config.read
+      const values = reviewOptions(configState.values)
+      const chat = yield* fallback(sessionID, values)
+      const selected = yield* selection(sessionID, values)
+      const explicit = yield* ctx.storage.get(`selection/${sessionID}`)
+      const legacy = yield* ctx.storage.get(`mode/${sessionID}`)
+      const chatMode = yield* ctx.storage.get(`fallback/${sessionID}`)
       return {
-        ...(yield* selection(sessionID)),
-        model: yield* connection.model("classifier").pipe(Effect.orDie),
-        ...(options.actions ? { actions: options.actions } : {}),
+        ...selected,
+        modeSource: selected.inheritedFrom
+          ? ("ancestor" as const)
+          : explicit !== undefined || legacy !== undefined
+            ? ("session" as const)
+            : configState.sources.defaultMode,
+        fallbackSource: chatMode !== undefined ? ("session" as const) : configState.sources.fallback,
+        model: yield* connection.model("classifier", values).pipe(Effect.orDie),
+        ...(values.actions ? { actions: values.actions } : {}),
         ...(chat ? { fallback: chat } : {}),
       }
     })
     const rpc: RpcRegistration<typeof Contract> = yield* ctx.rpc
       .register(Contract, {
-        connections: () => connection.list().pipe(Effect.orDie),
-        setConnection: (input) => connection.set(input).pipe(Effect.orDie),
-        setFallback: Effect.fn(function* (input) {
+        settings: () => server.pipe(Effect.orDie),
+        saveSettings: Effect.fn(function* (input) {
+          const next = yield* config.save(input).pipe(Effect.orDie)
+          if (input.connection) yield* connection.set(input.connection).pipe(Effect.orDie)
+          yield* config.commit(next.current)
+          const saved = yield* server.pipe(Effect.orDie)
+          yield* rpc.events.emit("settingsChanged", {}).pipe(Effect.orDie)
+          return saved
+        }),
+        session: Effect.fn(function* (input) {
+          return yield* state(input.sessionID).pipe(Effect.orDie)
+        }),
+        setSession: Effect.fn(function* (input) {
           yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
-          if (!options.fallback || options.mode !== "decision")
-            return yield* Effect.die(new Error("Configure a chat fallback for the decision reviewer first"))
-          yield* ctx.storage.set(`fallback/${input.sessionID}`, input.mode)
-          const next = yield* state(input.sessionID)
+          const values = yield* currentOptions.pipe(Effect.orDie)
+          const change = input.change
+          if (change.type === "reset") {
+            yield* ctx.storage.remove(`${change.target === "selection" ? "selection" : "fallback"}/${input.sessionID}`)
+            if (change.target === "selection") yield* ctx.storage.remove(`mode/${input.sessionID}`)
+          }
+          if (change.type === "fallback") {
+            if (!values.fallback || values.mode !== "decision")
+              return yield* Effect.die(new Error("Configure a second opinion for the classifier first"))
+            yield* ctx.storage.set(`fallback/${input.sessionID}`, change.mode)
+          }
+          if (change.type === "preset") {
+            yield* ctx.storage.set(`selection/${input.sessionID}`, {
+              preset: change.preset,
+              mode: change.preset === "auto" ? "auto" : "manual",
+            })
+          }
+          if (change.type === "reviewer") {
+            const selected = yield* selection(input.sessionID, values)
+            yield* ctx.storage.set(`selection/${input.sessionID}`, { preset: selected.preset, mode: change.mode })
+          }
+          const next = yield* state(input.sessionID).pipe(Effect.orDie)
           yield* rpc.events.emit("changed", { sessionID: input.sessionID, state: next }).pipe(Effect.orDie)
           return next
         }),
@@ -124,36 +171,6 @@ export default Plugin.define({
           yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
           yield* ctx.storage.remove(`approval/${input.sessionID}/${input.requestID}`)
         }),
-        get: Effect.fn(function* (input) {
-          return yield* state(input.sessionID)
-        }),
-        set: Effect.fn(function* (input) {
-          const current = yield* selection(input.sessionID)
-          const preset =
-            current.preset === "workspace" || current.preset === "auto" || current.preset === "shadow"
-              ? input.mode === "manual"
-                ? "workspace"
-                : input.mode
-              : current.preset
-          yield* ctx.storage.set(`mode/${input.sessionID}`, input.mode)
-          yield* ctx.storage.set(`selection/${input.sessionID}`, { preset, mode: input.mode })
-          const next = yield* state(input.sessionID)
-          yield* rpc.events.emit("changed", { sessionID: input.sessionID, state: next }).pipe(Effect.orDie)
-          return next
-        }),
-        select: Effect.fn(function* (input) {
-          yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
-          const mode =
-            input.preset === "configured"
-              ? (options.defaultMode ?? (options.shadow ? "shadow" : "auto"))
-              : input.preset === "auto" || input.preset === "shadow"
-                ? input.preset
-                : "manual"
-          yield* ctx.storage.set(`selection/${input.sessionID}`, { preset: input.preset, mode })
-          const next = yield* state(input.sessionID)
-          yield* rpc.events.emit("changed", { sessionID: input.sessionID, state: next }).pipe(Effect.orDie)
-          return next
-        }),
         history: Effect.fn(function* (input) {
           yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
           const entries: Assessment[] = []
@@ -175,7 +192,7 @@ export default Plugin.define({
     yield* ctx.permission.hook("evaluate", (event) =>
       Effect.gen(function* () {
         if (event.effect === "deny") return
-        const selected = yield* selection(event.sessionID)
+        const selected = yield* selection(event.sessionID, yield* currentOptions.pipe(Effect.orDie))
         // Scope presets may tighten OpenCode's decision, never relax it.
         if (selected.preset === "configured" || selected.preset === "full") return
         // Glob and grep authorize their search directory through external_directory first.
@@ -193,16 +210,18 @@ export default Plugin.define({
     )
     yield* ctx.permission.hook("experimental.review", (event) =>
       Effect.gen(function* () {
-        if (event.result || (options.actions && !options.actions.includes(event.request.action))) return
-        const selected = (yield* selection(event.request.sessionID)).mode
+        if (event.result) return
+        const values = yield* currentOptions.pipe(Effect.orDie)
+        if (values.actions && !values.actions.includes(event.request.action)) return
+        const selected = (yield* selection(event.request.sessionID, values)).mode
         if (selected === "manual") return
         const started = yield* Clock.currentTimeMillis
         const remembered = (yield* approvals(event.request.sessionID))
           .filter((entry) => entry.action === event.request.action)
           .slice(0, 20)
-        const chat = yield* fallback(event.request.sessionID)
-        const model = yield* connection.model("classifier").pipe(Effect.orDie)
-        const result = yield* review(ctx, event, { ...options, model, fallback: chat }, remembered).pipe(
+        const chat = yield* fallback(event.request.sessionID, values)
+        const model = yield* connection.model("classifier", values).pipe(Effect.orDie)
+        const result = yield* review(ctx, event, { ...values, model, fallback: chat }, remembered).pipe(
           Effect.catch(() =>
             Effect.succeed({
               decision: "escalate" as const,
@@ -217,7 +236,7 @@ export default Plugin.define({
           action: event.request.action,
           resources: event.request.resources,
           model: { providerID: model.providerID, id: model.id },
-          mode: options.mode ?? "chat",
+          mode: values.mode ?? "chat",
           shadow: selected === "shadow",
           at: completed,
           durationMs: completed - started,

@@ -32,6 +32,72 @@ export type ConnectionInput = typeof ConnectionInput.Type
 export const FallbackSettings = Schema.Struct({ model: Model.Ref, mode: FallbackMode, timeoutMs: Schema.Number })
 export type FallbackSettings = typeof FallbackSettings.Type
 
+export const Options = Schema.Struct({
+  model: Model.Ref,
+  mode: Schema.Literals(["chat", "decision"]).pipe(Schema.optional),
+  policy: Schema.String.pipe(Schema.optional),
+  actions: Schema.Array(Schema.String).pipe(Schema.optional),
+  shadow: Schema.Boolean.pipe(Schema.optional),
+  defaultMode: ReviewMode.pipe(Schema.optional),
+  minConfidence: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })).pipe(Schema.optional),
+  fallback: Schema.Struct({
+    model: Model.Ref,
+    mode: FallbackMode.pipe(Schema.optional),
+    timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 15_000 })).pipe(Schema.optional),
+  }).pipe(Schema.optional),
+})
+
+export const SettingKey = Schema.Literals([
+  "model",
+  "mode",
+  "minConfidence",
+  "defaultMode",
+  "actions",
+  "policy",
+  "fallback",
+])
+export type SettingKey = typeof SettingKey.Type
+export const settingKeys = SettingKey.literals
+export const ValueSource = Schema.Literals(["default", "configuration", "server"])
+export const ServerValues = Schema.Struct({
+  model: Model.Ref,
+  mode: Schema.Literals(["chat", "decision"]),
+  minConfidence: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  defaultMode: ReviewMode,
+  actions: Schema.NullOr(Schema.Array(Schema.String)),
+  policy: Schema.String,
+  fallback: Schema.NullOr(
+    Schema.Struct({
+      model: Model.Ref,
+      mode: FallbackMode,
+      timeoutMs: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 15_000 })),
+    }),
+  ),
+})
+export type ServerValues = typeof ServerValues.Type
+export const Overrides = Schema.Struct({
+  model: ServerValues.fields.model.pipe(Schema.optional),
+  mode: ServerValues.fields.mode.pipe(Schema.optional),
+  minConfidence: ServerValues.fields.minConfidence.pipe(Schema.optional),
+  defaultMode: ServerValues.fields.defaultMode.pipe(Schema.optional),
+  actions: ServerValues.fields.actions.pipe(Schema.optional),
+  policy: ServerValues.fields.policy.pipe(Schema.optional),
+  fallback: ServerValues.fields.fallback.pipe(Schema.optional),
+})
+export type Overrides = typeof Overrides.Type
+export const ServerSettings = Schema.Struct({
+  values: ServerValues,
+  sources: Schema.Record(Schema.String, ValueSource),
+  connections: Schema.Array(ConnectionSettings),
+})
+export type ServerSettings = typeof ServerSettings.Type
+export const SaveSettings = Schema.Struct({
+  patch: Overrides,
+  reset: Schema.Array(SettingKey).pipe(Schema.optional),
+  connection: ConnectionInput.pipe(Schema.optional),
+})
+export type SaveSettings = typeof SaveSettings.Type
+
 export const FallbackAssessment = Schema.Struct({
   ...ReviewResult.fields,
   model: Model.Ref,
@@ -43,7 +109,7 @@ export const FallbackAssessment = Schema.Struct({
 })
 export type FallbackAssessment = typeof FallbackAssessment.Type
 
-// Retain configured/shadow for saved state and existing RPC clients, outside the main selector.
+// Historical stored selections are normalized at the settings boundary.
 export const Preset = Schema.Literals(["configured", "read-only", "workspace", "auto", "shadow", "full"])
 export type Preset = typeof Preset.Type
 
@@ -88,6 +154,8 @@ export type Assessment = typeof Assessment.Type
 
 export const State = Schema.Struct({
   ...Selection.fields,
+  modeSource: Schema.Literals(["default", "configuration", "server", "session", "ancestor"]),
+  fallbackSource: Schema.Literals(["default", "configuration", "server", "session"]),
   fallback: FallbackSettings.pipe(Schema.optional),
   inheritedFrom: AssertInput.fields.sessionID.pipe(Schema.optional),
   model: Model.Ref,
@@ -99,16 +167,33 @@ export type State = typeof State.Type
 export const Contract = Rpc.define({
   id: "opencode.permission-review",
   methods: {
-    connections: {
+    settings: {
       input: Schema.toStandardSchemaV1(Schema.Struct({})),
-      output: Schema.toStandardSchemaV1(Schema.Array(ConnectionSettings)),
+      output: Schema.toStandardSchemaV1(ServerSettings),
     },
-    setConnection: {
-      input: Schema.toStandardSchemaV1(ConnectionInput),
-      output: Schema.toStandardSchemaV1(Schema.Array(ConnectionSettings)),
+    saveSettings: {
+      input: Schema.toStandardSchemaV1(SaveSettings),
+      output: Schema.toStandardSchemaV1(ServerSettings),
     },
-    setFallback: {
-      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, mode: FallbackMode })),
+    session: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID })),
+      output: Schema.toStandardSchemaV1(State),
+    },
+    setSession: {
+      input: Schema.toStandardSchemaV1(
+        Schema.Struct({
+          sessionID: AssertInput.fields.sessionID,
+          change: Schema.Union([
+            Schema.Struct({
+              type: Schema.Literal("preset"),
+              preset: Schema.Literals(["read-only", "workspace", "auto", "full"]),
+            }),
+            Schema.Struct({ type: Schema.Literal("reviewer"), mode: ReviewMode }),
+            Schema.Struct({ type: Schema.Literal("fallback"), mode: FallbackMode }),
+            Schema.Struct({ type: Schema.Literal("reset"), target: Schema.Literals(["selection", "fallback"]) }),
+          ]),
+        }),
+      ),
       output: Schema.toStandardSchemaV1(State),
     },
     allowSession: {
@@ -127,24 +212,13 @@ export const Contract = Rpc.define({
       ),
       output: Schema.toStandardSchemaV1(Schema.Void),
     },
-    get: {
-      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID })),
-      output: Schema.toStandardSchemaV1(State),
-    },
-    set: {
-      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, mode: ReviewMode })),
-      output: Schema.toStandardSchemaV1(State),
-    },
-    select: {
-      input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, preset: Preset })),
-      output: Schema.toStandardSchemaV1(State),
-    },
     history: {
       input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID })),
       output: Schema.toStandardSchemaV1(Schema.Array(Assessment)),
     },
   },
   events: {
+    settingsChanged: { schema: Schema.toStandardSchemaV1(Schema.Struct({})) },
     changed: {
       schema: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, state: State })),
     },
