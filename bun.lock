@@ -575,6 +575,27 @@
         "@opencode/plugin": "^2.0.27 || ^0.0.0-dev",
       },
     },
+    "packages/plugins/sudo": {
+      "name": "@opencode/plugin-sudo",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@opencode/core": "workspace:*",
+        "@opencode/theme": "workspace:*",
+        "@opencode/tui": "workspace:*",
+        "@opencode/util": "workspace:*",
+        "@tsconfig/bun": "catalog:",
+        "@types/bun": "catalog:",
+        "@types/node": "catalog:",
+        "@typescript/native": "catalog:",
+      },
+      "peerDependencies": {
+        "@opencode/plugin": "^2.2.5 || ^0.0.0-dev",
+        "@opentui/core": "0.8.1",
+        "@opentui/solid": "0.8.1",
+        "effect": "4.1.0",
+        "solid-js": "1.9.17",
+      },
+    },
     "packages/protocol": {
       "name": "@opencode/protocol",
       "version": "2.2.5",
@@ -1991,6 +2012,8 @@
     "@opencode/plugin-browser": ["@opencode/plugin-browser@workspace:packages/plugin-browser"],
 
     "@opencode/plugin-figma": ["@opencode/plugin-figma@workspace:packages/plugins/figma"],
+
+    "@opencode/plugin-sudo": ["@opencode/plugin-sudo@workspace:packages/plugins/sudo"],
 
     "@opencode/protocol": ["@opencode/protocol@workspace:packages/protocol"],
 

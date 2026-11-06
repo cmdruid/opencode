@@ -1,0 +1,56 @@
+{
+  "name": "@opencode/plugin-sudo",
+  "version": "0.0.0",
+  "description": "Experimental sudo tool with native terminal authentication",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./server": "./index.ts",
+    "./tui": "./tui.tsx",
+    "./rpc": "./rpc.ts"
+  },
+  "scripts": {
+    "typecheck": "bun check --no-script",
+    "typecheck:tsc": "tsc --noEmit",
+    "test": "bun test --timeout 30000",
+    "build:native": "bun script/build-native.ts",
+    "prepack": "bun run build:native"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.2.5 || ^0.0.0-dev",
+    "@opentui/core": "0.8.1",
+    "@opentui/solid": "0.8.1",
+    "effect": "4.1.0",
+    "solid-js": "1.9.17"
+  },
+  "devDependencies": {
+    "@opencode/core": "workspace:*",
+    "@opencode/theme": "workspace:*",
+    "@opencode/tui": "workspace:*",
+    "@opencode/util": "workspace:*",
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:"
+  },
+  "files": [
+    "index.ts",
+    "rpc.ts",
+    "requests.ts",
+    "tui.tsx",
+    "prompt.tsx",
+    "native.ts",
+    "native/bin/linux-x64/opencode-sudo-tty",
+    "native/bin/linux-x64/opencode-sudo-tty.sha256",
+    "native/helper.c",
+    "native/screen.h",
+    "native/README.md",
+    "README.md"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ]
+}
