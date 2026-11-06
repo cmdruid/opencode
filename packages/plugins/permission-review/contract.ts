@@ -8,6 +8,27 @@ export type ReviewMode = typeof ReviewMode.Type
 export const FallbackMode = Schema.Literals(["off", "shadow", "auto"])
 export type FallbackMode = typeof FallbackMode.Type
 
+export const ConnectionRole = Schema.Literals(["classifier", "fallback"])
+export type ConnectionRole = typeof ConnectionRole.Type
+
+export const ConnectionSettings = Schema.Struct({
+  role: ConnectionRole,
+  model: Model.Ref,
+  url: Schema.String.pipe(Schema.optional),
+  custom: Schema.Boolean,
+  authenticated: Schema.Boolean,
+})
+export type ConnectionSettings = typeof ConnectionSettings.Type
+
+export const ConnectionInput = Schema.Struct({
+  role: ConnectionRole,
+  // Omit the URL to restore the configured provider. Omit the key to keep it
+  // only when the endpoint is unchanged; an empty key selects no authentication.
+  url: Schema.String.pipe(Schema.optional),
+  apiKey: Schema.String.pipe(Schema.optional),
+})
+export type ConnectionInput = typeof ConnectionInput.Type
+
 export const FallbackSettings = Schema.Struct({ model: Model.Ref, mode: FallbackMode, timeoutMs: Schema.Number })
 export type FallbackSettings = typeof FallbackSettings.Type
 
@@ -78,6 +99,14 @@ export type State = typeof State.Type
 export const Contract = Rpc.define({
   id: "opencode.permission-review",
   methods: {
+    connections: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({})),
+      output: Schema.toStandardSchemaV1(Schema.Array(ConnectionSettings)),
+    },
+    setConnection: {
+      input: Schema.toStandardSchemaV1(ConnectionInput),
+      output: Schema.toStandardSchemaV1(Schema.Array(ConnectionSettings)),
+    },
     setFallback: {
       input: Schema.toStandardSchemaV1(Schema.Struct({ sessionID: AssertInput.fields.sessionID, mode: FallbackMode })),
       output: Schema.toStandardSchemaV1(State),

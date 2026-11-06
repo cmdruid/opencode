@@ -97,10 +97,10 @@ const permissionLayer = Layer.succeed(
   }),
 )
 
-// Pass null to exercise the real permission service and its registered plugin hooks.
+// Pass null to exercise the real permission or generation service.
 export const makePluginTestLayer = (
   permission: typeof permissionLayer | null = permissionLayer,
-  generate = generateLayer,
+  generate: typeof generateLayer | null = generateLayer,
   mcp = emptyMcpLayer,
 ) =>
   AppNodeBuilder.build(
@@ -156,7 +156,7 @@ export const makePluginTestLayer = (
       Npm.node.replace(npmLayer),
       Config.node.replace(configLayer),
       Mcp.node.replace(mcp),
-      Generate.node.replace(generate),
+      ...(generate ? [Generate.node.replace(generate)] : []),
       ...(permission ? [Permission.node.replace(permission)] : []),
       offlineModels,
     ],

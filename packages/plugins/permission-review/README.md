@@ -101,6 +101,16 @@ Fallback defaults to **Shadow** when configured: record the second opinion witho
 
 These changes are plugin-only. A local source plugin and its companion reload without rebuilding or restarting OpenCode. Adding or changing the configuration uses the normal configuration reload; pending prompts are not re-reviewed.
 
+## Reviewer connections
+
+Open **`/permissions` → Settings → Classifier connection** or **Chat fallback connection** to set each reviewer's base URL and optional API key. Include the API prefix, such as `http://127.0.0.1:28443/v1`; the configured model's adapter adds its operation path (`/systemone` for the Maple classifier, `/chat/completions` for the chat fallback). URLs must use HTTP or HTTPS without embedded credentials, a query string or a fragment.
+
+Choose **Edit connection**, enter the base URL, then choose **No API key**, **Set API key**, or **Keep saved API key** when editing the same endpoint. Canceling any step leaves the connection unchanged. Existing keys are never prefilled or returned by the settings RPC. New keys go through OpenCode's integration API into its credential store; plugin storage contains only the endpoint and connection reference. Changing the URL starts without carrying the old key to the new endpoint.
+
+These overrides apply to all sessions on the server and survive reconnects and plugin reloads. They use separate provider identities for the classifier and fallback, preserving the configured model ID, adapter and variant body settings, including the chat token cap. The source provider's headers and connection settings are not copied to a custom endpoint. Your main chat provider and its credentials are unchanged. Subsequent reviews read the saved override without restarting OpenCode.
+
+**Use configured provider** removes that reviewer's override and resumes the provider and credentials from the plugin configuration. **No API key** disables authentication for the custom connection; previously saved keys remain in OpenCode's credential store. Connection settings do not change the permission preset, confidence threshold or fallback mode. A fallback model must already be configured before editing its connection.
+
 ## Decision flow
 
 ```mermaid

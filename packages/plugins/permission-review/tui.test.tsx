@@ -233,7 +233,7 @@ async function openSettings(setup: Awaited<ReturnType<typeof createAppFixture>>,
   await setup.mockInput.typeText("Settings")
   await setup.waitForFrame((frame) => frame.includes("Settings") && !frame.includes("Full access"))
   setup.mockInput.pressEnter()
-  await setup.waitForFrame((frame) => frame.includes("Permission settings — this session"))
+  await setup.waitForFrame((frame) => frame.includes("Permission settings"))
   await setup.waitFor(() => setup.renderer.currentFocusedEditor instanceof InputRenderable)
   await setup.mockInput.typeText(item)
   await setup.waitForFrame((frame) => frame.includes(item))
