@@ -88,6 +88,10 @@ The threshold routes decisions; it is not a calibrated probability of safety. Mo
 
 Connection URLs must be HTTP(S), include any API prefix such as `/v1`, and contain no embedded credentials, query or fragment. Choose the configured provider, no authentication, a new API key, or retain the saved key for an unchanged endpoint. A changed endpoint never inherits the previous key. Saved keys are never prefilled or returned in settings responses; credentials stay in the host credential store. Plugin KV stores only connection metadata. Restoring the configured provider removes the override; old credentials can remain in the host store. Classifier and reviewer connection identities are separate; custom endpoints do not copy the original provider's headers.
 
+## Review prompts
+
+Pending requests show classifier decision/score and reviewer decision on one status line, followed by a short **Reason:**. The reviewer can include one optional detail naming the relevant script, file, target or effect. It appears as a shaded code block without a label in the compatible fork TUI. Both reason and detail are limited to 120 characters each and wrap in narrow terminals; the complete explanation remains in Activity → Review history. Models that omit the new fields still work, using a shortened version of their reason.
+
 ## Decision rules and limitations
 
 Permission precedence remains **OpenCode effective rules → additional preset restrictions → selected reviewer for remaining asks**. Denials remain denied. Restrictive presets may tighten saved grants without deleting them. Full access does not relax a configured ask or deny. Requests outside the action filter go to the human. These are approval policies, **not an OS sandbox**: an approved command runs with the account's access.

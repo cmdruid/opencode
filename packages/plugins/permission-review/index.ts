@@ -4,7 +4,7 @@ import { Clock, Effect, Option, Schema } from "effect"
 import path from "node:path"
 import type { AssertInput } from "@opencode/plugin/permission"
 import { Assessment, Contract, FallbackMode, ReviewMode, ReviewWith, Selection, SessionApproval } from "./contract.js"
-import { Options, review } from "./review.js"
+import { Options, presentation, review } from "./review.js"
 import { connections } from "./connections.js"
 import { settings, reviewOptions } from "./settings.js"
 
@@ -312,12 +312,10 @@ export default Plugin.define({
           shadow,
           reason: result.reason,
         })
-        event.result = shadow
-          ? {
-              decision: "escalate",
-              reason: `Shadow review suggests ${result.decision}: ${result.reason} Your decision is required.`,
-            }
-          : { decision: result.decision, reason: result.reason }
+        event.result = {
+          decision: shadow ? "escalate" : result.decision,
+          reason: presentation(result, shadow),
+        }
       }),
     )
   }),

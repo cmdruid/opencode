@@ -110,6 +110,8 @@ export type SaveSettings = typeof SaveSettings.Type
 
 export const FallbackAssessment = Schema.Struct({
   ...ReviewResult.fields,
+  summary: Schema.String.pipe(Schema.optional),
+  details: Schema.String.pipe(Schema.optional),
   model: Model.Ref,
   mode: Schema.Literals(["shadow", "auto"]),
   trigger: Schema.Literals(["low-confidence", "uncertain"]),
@@ -141,6 +143,8 @@ export type SessionApproval = typeof SessionApproval.Type
 
 export const Assessment = Schema.Struct({
   ...ReviewResult.fields,
+  summary: Schema.String.pipe(Schema.optional),
+  details: Schema.String.pipe(Schema.optional),
   fallback: FallbackAssessment.pipe(Schema.optional),
   requestID: Schema.String,
   sessionID: AssertInput.fields.sessionID,

@@ -11,7 +11,7 @@ import { DateTime, Deferred, Effect, Exit, Fiber } from "effect"
 import { TestClock } from "effect/testing"
 import { it } from "../../core/test/lib/effect"
 import { location } from "../../core/test/fixture/location"
-import { review } from "./review.js"
+import { presentation, review } from "./review.js"
 import type { SessionApproval } from "./contract.js"
 
 const options = { model: Model.Ref.parse("test/reviewer") }
@@ -783,5 +783,60 @@ it.effect("requests without a known source do not attach unrelated session obser
       yield* review(ctx, { request: { ...event.request, source } }, options)
       expect(fixture.prompts[0]).not.toContain("DO_NOT_ATTACH")
     }
+  }),
+)
+
+it.effect("compact presentation preserves reviewer details and scores separately from the pending explanation", () =>
+  Effect.gen(function* () {
+    const reason =
+      "The assistant is attempting to run a tracker script. " +
+      "The accepted list is unavailable in the evidence. ".repeat(12)
+    const summary = "The approved task list is missing from context."
+    const details = "~/Skills/tracker/scripts/tracker.sh"
+    const fixture = context(JSON.stringify({ decision: "escalate", summary, details, reason }), [
+      { ...uncertain, probabilities: [{ value: "approve", probability: 0.6203 }] },
+    ])
+    const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", minConfidence: 0.9, fallback })
+    expect(presentation(result)).toBe(
+      `Classifier: Approve 62.03% · Reviewer: Escalate\n\nReason: ${summary}\n\n\`\`\`\n${details}\n\`\`\``,
+    )
+    expect(result.fallback).toMatchObject({ summary, details, reason, decision: "escalate", applied: false })
+    expect(result.reason).toContain(reason)
+    expect(fixture.prompts[0]).toContain("at most 120 characters")
+    const chat = yield* review(fixture.ctx, event, { ...options, mode: "chat" })
+    expect(chat).toEqual({ decision: "escalate", summary, details, reason })
+    expect(presentation(chat)).toBe(`Review: Escalate\n\nReason: ${summary}\n\n\`\`\`\n${details}\n\`\`\``)
+    expect(presentation(result, true)).toContain("Your decision is required in shadow mode.")
+  }),
+)
+
+it.effect("compact presentation bounds legacy prose without changing the recorded assessment", () =>
+  Effect.gen(function* () {
+    const reason = "The script writes shared configuration. " + "Additional explanation. ".repeat(50)
+    const fixture = context(JSON.stringify({ decision: "escalate", reason }), [uncertain])
+    const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })
+    const text = presentation(result)
+    expect(text.split("Reason: ")[1].length).toBeLessThanOrEqual(120)
+    expect(text).toContain("The script writes shared configuration.")
+    expect(text).toEndWith("…")
+    expect(result.fallback?.reason).toBe(reason)
+    expect(text).not.toContain("Classifier proposed")
+    expect(text).not.toContain("Chat fallback:")
+    expect(presentation({ decision: "escalate", summary: "  ", details: "  ", reason: "Missing scope." })).toBe(
+      "Review: Escalate\n\nReason: Missing scope.",
+    )
+    const detailed = presentation({
+      decision: "escalate",
+      reason: "Missing scope.",
+      details: "``` " + "target ".repeat(50),
+    })
+    expect(detailed).toContain("\n\n````\n``` target")
+    expect(detailed).toEndWith("…\n````")
+    expect(detailed.split("\n")[5].length).toBeLessThanOrEqual(120)
+    const direct = yield* review(fixture.ctx, event, { ...options, mode: "decision" })
+    expect(presentation(direct)).toContain("Approval score is below the 98% minimum.")
+    const failed = context(Effect.fail("Unavailable"), [uncertain])
+    const unavailable = yield* review(failed.ctx, event, { ...options, mode: "decision", fallback })
+    expect(presentation(unavailable)).toContain("Reviewer: Unavailable")
   }),
 )

@@ -200,3 +200,36 @@ for (const trial of [
     }),
   )
 }
+
+it.live("pending requests receive a concise summary while history retains the full reviewer explanation", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const hooks = yield* PluginHooks.Service
+    const host = yield* PluginHost.make(plugins, reviewer.id)
+    const session = yield* host.session.create({})
+    yield* addUserTask(session.id, "Proceed with the approved items.")
+    const reason =
+      "The user references a numbered proposal that is missing from context. " + "More diagnostic detail. ".repeat(20)
+    const summary = "The approved task list is missing from context."
+    yield* reviewer.effect({
+      ...host,
+      options: { model: Model.Ref.parse("test/reviewer"), mode: "chat", shadow: false },
+      experimental: {
+        ...host.experimental,
+        generate: {
+          ...host.experimental.generate,
+          text: () => Effect.succeed({ text: JSON.stringify({ decision: "escalate", summary, reason }) }),
+        },
+      },
+    })
+    const event = yield* hooks.trigger("permission", "experimental.review", {
+      request: { id: Permission.ID.create(), sessionID: session.id, action: "shell", resources: ["tracker.sh list"] },
+    })
+    expect(event.result).toEqual({ decision: "escalate", reason: `Review: Escalate\n\nReason: ${summary}` })
+    expect((yield* host.rpc(Contract).history({ sessionID: session.id }))[0]).toMatchObject({
+      decision: "escalate",
+      summary,
+      reason,
+    })
+  }),
+)

@@ -1,7 +1,7 @@
 import { createStore } from "solid-js/store"
 import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
-import type { TextareaRenderable } from "@opentui/core"
+import { CodeRenderable, type TextareaRenderable } from "@opentui/core"
 import { useTheme, useThemes } from "../../context/theme"
 import type { PermissionReply, PermissionRequest } from "@opencode/client"
 import { SplitBorder } from "../../ui/border"
@@ -118,6 +118,7 @@ export function PermissionPrompt(props: {
   actions?: readonly PermissionAction[]
 }) {
   const data = useData()
+  const renderer = useRenderer()
   const toast = useToast()
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
@@ -140,6 +141,7 @@ export function PermissionPrompt(props: {
   })
 
   const theme = useTheme()
+  const themes = useThemes()
 
   function reply(value: PermissionReply, message?: string) {
     void data.session.permission
@@ -236,7 +238,7 @@ export function PermissionPrompt(props: {
                         id={`session.permission.${props.request.id}.message`}
                         paddingLeft={1}
                         minHeight={1}
-                        maxHeight={6}
+                        maxHeight={8}
                         flexShrink={1}
                         verticalScrollbarOptions={{
                           trackOptions: {
@@ -245,7 +247,29 @@ export function PermissionPrompt(props: {
                           },
                         }}
                       >
-                        <text fg={theme.text.feedback.info.base}>{message()}</text>
+                        <markdown
+                          syntaxStyle={themes.currentSyntax()}
+                          content={message()}
+                          streaming={false}
+                          conceal
+                          fg={theme.text.feedback.info.base}
+                          bg={theme.background.base}
+                          internalBlockMode="top-level"
+                          renderNode={(token, context) => {
+                            if (token.type !== "code") return
+                            return new CodeRenderable(renderer, {
+                              content: token.text,
+                              syntaxStyle: context.syntaxStyle,
+                              fg: theme.markdown.codeBlock,
+                              bg: theme.background.raised.base,
+                              paddingLeft: 1,
+                              paddingRight: 1,
+                              width: "100%",
+                              drawUnstyledText: true,
+                              streaming: false,
+                            })
+                          }}
+                        />
                       </scrollbox>
                     )}
                   </Show>

@@ -57,6 +57,10 @@ for (const file of Object.values(manifest.exports)) assert(await Bun.file(path.j
 const calls: string[] = []
 const bodies: string[] = []
 let classifierChoice: "approve" | "escalate" = "approve"
+let chatDecision: "approve" | "escalate" = "approve"
+const summary = "The approved task list is missing from context."
+const details = "~/Skills/tracker/scripts/tracker.sh"
+const fullReason = "The accepted task list is unavailable. " + "Full diagnostic explanation. ".repeat(20)
 const model = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
@@ -66,8 +70,9 @@ const model = Bun.serve({
     bodies.push(JSON.stringify(body))
     if (new URL(request.url).pathname.endsWith("/chat/completions")) {
       const content = JSON.stringify({
-        decision: "approve",
-        reason: "The recorded dialog answer authorizes this read.",
+        decision: chatDecision,
+        ...(chatDecision === "escalate" ? { summary, details } : {}),
+        reason: chatDecision === "escalate" ? fullReason : "The recorded dialog answer authorizes this read.",
       })
       if (body.stream)
         return new Response(
@@ -335,6 +340,28 @@ try {
       (review) => review.classifier?.choice === "escalate" && review.fallback?.applied && review.decision === "approve",
     ),
   )
+  chatDecision = "escalate"
+  const escalated = await request<{ data: { id: string; effect: string } }>(
+    `/api/session/${answered.data.id}/permission`,
+    {
+      action: "shell",
+      resources: [details],
+    },
+  )
+  assert.equal(escalated.data.effect, "ask")
+  const prompts = await request<{ data: { id: string; message?: string }[] }>(
+    `/api/session/${answered.data.id}/permission`,
+  )
+  const prompt = prompts.data.find((item) => item.id === escalated.data.id)
+  assert.equal(
+    prompt?.message,
+    `Classifier: Escalate 100% · Reviewer: Escalate\n\nReason: ${summary}\n\n\`\`\`\n${details}\n\`\`\``,
+  )
+  const diagnostic = (await rpc<Assessment[]>("history", { sessionID: answered.data.id })).find(
+    (item) => item.requestID === escalated.data.id,
+  )
+  assert.equal(diagnostic?.fallback?.reason, fullReason)
+  assert.equal(diagnostic?.fallback?.details, details)
   await run(
     [
       "tmux",
@@ -372,6 +399,33 @@ try {
   await waitFrame("Choose permissions")
   await run(["tmux", "-L", socket, "send-keys", "-t", "check", "Enter"], env)
   await Bun.write(path.join(root, "tui.txt"), await waitFrame("Read only"))
+  await run(
+    [
+      "tmux",
+      "-L",
+      socket,
+      "new-window",
+      "-t",
+      "check",
+      "-n",
+      "review",
+      binary,
+      "--server",
+      server.url,
+      "-s",
+      answered.data.id,
+      project,
+    ],
+    env,
+  )
+  await Bun.write(path.join(root, "review-wide.txt"), await waitFrame("tracker.sh"))
+  await run(["tmux", "-L", socket, "resize-window", "-t", "check", "-x", "44", "-y", "36"], env)
+  const narrow = await waitFrame("from context.")
+  assert(narrow.includes("tracker.sh"))
+  assert(narrow.includes("Reason:"))
+  assert(narrow.includes("Reject"))
+  assert(!narrow.includes("Details:"))
+  await Bun.write(path.join(root, "review-narrow.txt"), narrow)
   const report = {
     tarball,
     sha256: new Bun.CryptoHasher("sha256").update(await Bun.file(tarball).arrayBuffer()).digest("hex"),
@@ -386,6 +440,9 @@ try {
     queuedRequestApproved: queued.data.id,
     questionAuthorizationRestored: delegated.data.effect === "allow",
     classifierEscalationResolved: true,
+    compactPromptVerified: true,
+    fullDiagnosticPreserved: true,
+    promptWidths: [44, 112],
     compactedAuthorizationRestored: restored.data.effect === "allow",
     permission: permission.data,
     modelCalls: calls,

@@ -6,6 +6,12 @@ import { Options, percent, type Assessment, type FallbackAssessment, type Sessio
 
 export { Options } from "./contract.js"
 
+const ResponseDecision = Schema.Struct({
+  ...ReviewResult.fields,
+  summary: Schema.String.pipe(Schema.optional),
+  details: Schema.String.pipe(Schema.optional),
+})
+
 const instructions = `You review a proposed tool permission request on the user's behalf.
 Choose approve, deny, or escalate. Your decision covers exactly this request, never future requests.
 Approve only when the evidence establishes that the action is within the user's authorized task and its effects are understood.
@@ -33,7 +39,10 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
   event: PermissionReview,
   options: typeof Options.Type,
   approvals: readonly SessionApproval[] = [],
-): Effect.fn.Return<Pick<Assessment, "decision" | "reason" | "classifier" | "fallback">, unknown> {
+): Effect.fn.Return<
+  Pick<Assessment, "decision" | "reason" | "summary" | "details" | "classifier" | "fallback">,
+  unknown
+> {
   if (!ctx.experimental.session?.authorization)
     return {
       decision: "escalate",
@@ -93,7 +102,7 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
     ...required,
     ...(observations.length ? { observations, observationsOmitted: context.available - observations.length } : {}),
   })
-  const prompt = `${guidance}\nReturn only a JSON object with decision (approve, deny, or escalate) and a short reason.\n\nReview policy:\n${options.policy ?? "Use the rules above."}\n\nEvidence (JSON):\n${evidence}`
+  const prompt = `${guidance}\nReturn only a JSON object with decision (approve, deny, or escalate), summary, reason, and optional details. summary is a plain-language explanation for the user, one short sentence of at most 120 characters stating why the request is approved, denied, or escalated. For an escalation, name the specific missing authorization, uncertain effect, or restriction. Do not repeat the command, describe the assistant, recite the policy, include scores, or ask the user to review. Example summary: "The approved task list is missing from context." details is optional: one plain-text line of at most 120 characters identifying the specific script, file, target, or effect that caused escalation. Use only facts present in the request evidence. Omit it when it adds nothing; do not include a label or repeat the summary. reason preserves the supporting explanation for diagnostics. Keep all fields consistent with the decision.\n\nReview policy:\n${options.policy ?? "Use the rules above."}\n\nEvidence (JSON):\n${evidence}`
   if (options.mode !== "decision") {
     const response = yield* ctx.experimental.generate.text({
       model: options.model,
@@ -220,7 +229,7 @@ function parseDecision(text: string) {
   const trimmed = text.trim()
   // Accept one whole fenced response, never extract a decision from surrounding prose.
   const fenced = trimmed.match(/^(`{3,}|~{3,})[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n\1$/i)
-  return Schema.decodeUnknownOption(Schema.fromJsonString(ReviewResult))(fenced?.[2] ?? trimmed)
+  return Schema.decodeUnknownOption(Schema.fromJsonString(ResponseDecision))(fenced?.[2] ?? trimmed)
 }
 
 function contextObservations(
@@ -274,4 +283,46 @@ function contextObservations(
       ]
     })
   return { selected, available: previous.length }
+}
+
+/** Compact prompt text; the complete assessment remains in review history. */
+export function presentation(
+  result: Pick<Assessment, "decision" | "reason" | "summary" | "details" | "classifier" | "fallback">,
+  shadow = false,
+) {
+  const labels = { approve: "Approve", deny: "Deny", escalate: "Escalate" }
+  const classifier = result.classifier
+  const fallback = result.fallback
+  const choice = classifier?.choice
+  const score = classifier?.probabilities.find((item) => item.value === choice)?.probability
+  const status = classifier
+    ? [
+        `Classifier: ${choice === "approve" || choice === "deny" || choice === "escalate" ? labels[choice] : "Invalid"}${score !== undefined ? ` ${percent(score)}` : ""}`,
+        ...(fallback
+          ? [
+              `Reviewer: ${fallback.status === "completed" ? labels[fallback.decision] : { invalid: "Invalid response", unavailable: "Unavailable", timeout: "Timed out" }[fallback.status]}${fallback.mode === "shadow" ? " (shadow)" : ""}`,
+            ]
+          : []),
+      ].join(" · ")
+    : `Review: ${labels[result.decision]}`
+  // Older models may omit summary. Keep their full reason in history and bound the prompt text.
+  const reason = concise(
+    [fallback?.summary, result.summary, fallback?.reason].find((value) => value?.trim()) || result.reason,
+  )
+  const details = concise([fallback?.details, result.details].find((value) => value?.trim()) || "")
+  const fence = "`".repeat(Math.max(3, ...Array.from(details.matchAll(/`+/g), (match) => match[0].length + 1)))
+  const explanation =
+    classifier && !fallback && !result.summary
+      ? choice === "approve" && result.decision === "escalate"
+        ? `Approval score is below the ${percent(classifier.threshold)} minimum.`
+        : choice === "escalate"
+          ? "The classifier could not confirm authorization."
+          : reason
+      : reason
+  return `${status}${shadow ? " · Shadow" : ""}\n\nReason: ${explanation}${details && details !== explanation ? `\n\n${fence}\n${details}\n${fence}` : ""}${shadow ? "\nYour decision is required in shadow mode." : ""}`
+}
+
+function concise(value: string) {
+  const text = value.replace(/\s+/g, " ").trim()
+  return text.length <= 120 ? text : `${text.slice(0, 119).replace(/\s+\S*$/, "")}…`
 }

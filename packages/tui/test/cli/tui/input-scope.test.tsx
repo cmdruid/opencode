@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import type { PermissionRequest } from "@opencode/client"
-import { ScrollBoxRenderable, type TextareaRenderable } from "@opentui/core"
+import { CodeRenderable, ScrollBoxRenderable, type Renderable, type TextareaRenderable } from "@opentui/core"
 import { testRender, type JSX } from "@opentui/solid"
 import { expect, test } from "bun:test"
 import { createSignal, onMount } from "solid-js"
@@ -10,22 +10,24 @@ import { DataProvider, useData, type FormWithLocation } from "../../../src/conte
 import { Keymap } from "../../../src/context/keymap"
 import { InteractivityProvider } from "../../../src/context/interactivity"
 import { LocationProvider } from "../../../src/context/location"
-import { ThemeProvider } from "../../../src/context/theme"
+import { ThemeProvider, useTheme } from "../../../src/context/theme"
 import { FormPrompt, FORM_MODE } from "../../../src/routes/session/form"
 import { PermissionPrompt } from "../../../src/routes/session/permission"
 import { DialogProvider } from "../../../src/ui/dialog"
 import { ToastProvider, useToast } from "../../../src/ui/toast"
 import { emptyThemeSource, tmpdir } from "../../fixture/fixture"
+import { waitForHighlightedFrame } from "../../fixture/frame"
 import { createApi, createEventStream, createFetch, json } from "../../fixture/tui-client"
 import { TestTuiContexts } from "../../fixture/tui-environment"
 import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
 
-async function mountPanes(root: string, render: () => JSX.Element, parentID?: string) {
+async function mountPanes(root: string, render: () => JSX.Element, parentID?: string, mode: "dark" | "light" = "dark") {
   const [active, setActive] = createSignal(false)
   const replies: unknown[] = []
   const cancellations: string[] = []
   const submissions: string[] = []
   const ready = Promise.withResolvers<void>()
+  let theme!: ReturnType<typeof useTheme>
   let peer!: TextareaRenderable
   let keymap!: Keymap
   let toast!: ReturnType<typeof useToast>
@@ -56,6 +58,7 @@ async function mountPanes(root: string, render: () => JSX.Element, parentID?: st
 
   function Panes() {
     const data = useData()
+    theme = useTheme()
     keymap = Keymap.use()
     toast = useToast()
     onMount(() => void data.session.sync("ses_scoped").then(ready.resolve, ready.reject))
@@ -82,7 +85,7 @@ async function mountPanes(root: string, render: () => JSX.Element, parentID?: st
             <ClientProvider api={createApi(transport.fetch)}>
               <DataProvider directory={root}>
                 <LocationProvider>
-                  <ThemeProvider mode="dark" source={emptyThemeSource}>
+                  <ThemeProvider mode={mode} source={emptyThemeSource}>
                     <ToastProvider>
                       <DialogProvider>
                         <Panes />
@@ -101,7 +104,7 @@ async function mountPanes(root: string, render: () => JSX.Element, parentID?: st
   app.renderer.start()
   await ready.promise
   await app.renderOnce()
-  return { app, setActive, replies, cancellations, submissions, peer, keymap, toast }
+  return { app, setActive, replies, cancellations, submissions, peer, keymap, toast, theme }
 }
 
 function form(fields: FormWithLocation["fields"]): FormWithLocation {
@@ -269,11 +272,14 @@ test("permission review explanations remain visible while choosing a reply", asy
   ))
   try {
     panes.setActive(true)
-    await panes.app.waitForFrame((frame) => frame.includes("Shadow review suggests escalate:"))
+    await waitForHighlightedFrame(panes.app, (frame) => frame.includes("Shadow review suggests escalate:"))
     expect(panes.app.captureCharFrame()).toContain("Your decision is required.")
     expect(panes.replies).toEqual([])
     panes.app.mockInput.pressArrow("right")
-    await panes.app.waitForFrame((frame) => frame.includes("This will always allow"))
+    await waitForHighlightedFrame(
+      panes.app,
+      (frame) => frame.includes("This will always allow") && frame.includes("Shadow review suggests escalate:"),
+    )
     expect(panes.app.captureCharFrame()).toContain("Shadow review suggests escalate:")
     expect(panes.replies).toEqual([])
     panes.app.resize(55, 24)
@@ -364,3 +370,57 @@ test("permission rejection text keeps its draft and regains focus when its scope
     panes.app.renderer.destroy()
   }
 })
+
+test.each([
+  { width: 44, mode: "dark" },
+  { width: 112, mode: "dark" },
+  { width: 44, mode: "light" },
+  { width: 112, mode: "light" },
+] as const)(
+  "permission summaries show a compact explanation and highlighted detail at $width columns ($mode)",
+  async ({ width, mode }) => {
+    await using tmp = await tmpdir()
+    const panes = await mountPanes(
+      tmp.path,
+      () => (
+        <PermissionPrompt
+          request={{
+            ...request,
+            message:
+              "Classifier: Approve 62.03% · Reviewer: Escalate\n\nReason: The approved task list is missing from context.\n\n```\n~/Skills/tracker/scripts/tracker.sh\n```",
+          }}
+        />
+      ),
+      undefined,
+      mode,
+    )
+    try {
+      panes.setActive(true)
+      panes.app.resize(width, 36)
+      await waitForHighlightedFrame(panes.app, (frame) => frame.includes("tracker.sh") && frame.includes("context."))
+      const frame = panes.app.captureCharFrame()
+      expect(frame).toContain("Classifier:")
+      expect(frame).toContain("62.03%")
+      expect(frame).toContain("Escalate")
+      expect(frame).not.toContain("Details:")
+      expect(frame).not.toContain("```")
+      expect(frame).toContain("Allow once")
+      expect(frame).toContain("Reject")
+      const explanation = panes.app.renderer.root.findDescendantById(`session.permission.${request.id}.message`)
+      if (!(explanation instanceof ScrollBoxRenderable)) throw new Error("Missing explanation")
+      const detail = descendants(explanation).find(
+        (child): child is CodeRenderable => child instanceof CodeRenderable && child.content.includes("tracker.sh"),
+      )
+      expect(detail).toBeDefined()
+      expect(detail?.bg).toEqual(panes.theme.background.raised.base)
+      expect(detail?.fg).toEqual(panes.theme.markdown.codeBlock)
+      expect(panes.replies).toEqual([])
+    } finally {
+      panes.app.renderer.destroy()
+    }
+  },
+)
+
+function descendants(node: Renderable): Renderable[] {
+  return node.getChildren().flatMap((child) => [child, ...descendants(child)])
+}

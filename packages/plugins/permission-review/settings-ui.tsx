@@ -952,6 +952,8 @@ export function matchesPreset(state: State | undefined, preset: keyof typeof pre
 export function describe(entry: Assessment) {
   return [
     `${entry.shadow ? "Shadow proposal" : "Reviewer decision"}: ${entry.decision}`,
+    ...(entry.summary || entry.fallback?.summary ? [`Summary: ${entry.fallback?.summary || entry.summary}`] : []),
+    ...(entry.details || entry.fallback?.details ? [entry.fallback?.details || entry.details!] : []),
     `Action: ${entry.action}`,
     `Resources: ${entry.resources?.join(", ") ?? "none"}`,
     `Reviewer: ${modelName(entry.model)}`,

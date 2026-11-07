@@ -208,3 +208,21 @@ Validation:
 Plugin SHA256: `7e8e5af3a7f86265e4996a7782b46bee1372af59a2841c873e357507f84cfb12`. Host `2.2.5-cmdruid.permanswers.20261107` SHA256: `667f94fbdbb93739fb14b90b9ee0e6070eff4d42ae55c1788796440696437bca`, including web UI. Activated on the existing client after verifying no active sessions or pending requests, using managed-service replacement and terminal handoff. Alpha.8 is active under `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.8/node_modules/@cmdcode/opencode-auto-permissions`. Complete settings and all ten session choices match their pre-update snapshots. Threshold remains 90%; reviewer remains plain `maple/gemma4-31b`. Endpoint remains `http://127.0.0.1:49374`.
 
 Host backup: `~/.opencode/backups/before-host-perm-answers-20261107/opencode`. Configuration backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T06-37-40-774Z`. Final activation verification: `/tmp/perm-answers-activation-verification.json`. Existing requests were not replayed; this verifies evidence delivery and routing, not general model accuracy. npm publication remains deferred.
+
+
+## Compact review prompts — 2026-11-07
+
+Alpha.9 separates the pending prompt from the stored explanation. The status line shows classifier decision/probability and reviewer decision; a short Reason follows. The reviewer can supply an optional unlabeled detail identifying the relevant script, file, target or effect. Reason and detail are capped at 120 characters each, with whitespace normalized and details fenced safely. Missing new fields remain compatible with existing models and historical records. Full model reasons remain in Activity history. Decision routing, threshold and approval policy are unchanged.
+
+The native TUI renders Markdown and uses the existing code foreground and raised background for the optional detail. It wraps at narrow widths, keeps reply controls available, and allows scrolling for longer explanations. No public theme tokens, Protocol or HttpApi changed. Already-open terminal clients must be reopened to load the new host rendering code.
+
+Validation:
+
+- Full plugin suite: 54 pass, 511 assertions; Core review/fallback: 14 pass, 126 assertions.
+- Ten repetitions: review tests 250 pass, 3,150 assertions; TUI input scopes and light/dark 44/112-column presentation 110 pass, 970 assertions. Renderer assertions verify actual code-block foreground/background and retained approval controls. The strengthened full-reason narrow-width assertions also pass.
+- Official plugin and TUI TypeScript checks pass. Root `bun run check`: 36/36 tasks pass.
+- Exact artifact/compiled host verification: `/tmp/permission-package-check-XHmDPP/verification.json`. Synthetic classifier+reviewer escalation produces the exact compact pending message while retaining the full diagnostic explanation. Packaged TUI captures at 44 and 112 columns confirm reason/detail wrapping. Existing settings persistence, custom connection, question/compaction evidence, reviewer delegation and queued Allow Session checks pass. No real provider calls or live permission replies.
+
+Plugin SHA256: `f444768a03c378a52b847eb832bd091325e6facae244307fcb941b890a821a10`. Host `2.2.5-cmdruid.permprompt.20261107` SHA256: `fcb63e5aa18944bde654740575d0d1edf3fef3b16714f93826897f2b788ba22f`, including web UI. Activated with no active sessions or pending requests. Alpha.9 is active at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.9/node_modules/@cmdcode/opencode-auto-permissions`. All 11 session choices and complete settings preserved, including 90% threshold and plain maple/gemma4-31b. Existing endpoint 127.0.0.1:49374, server PID 2234089.
+
+Host rollback copy: `~/.opencode/backups/before-host-perm-prompt-20261107/opencode`. Configuration rollback copy: `~/.opencode/backups/before-auto-permissions-2026-11-07T20-22-09-354Z`. Activation report: `/tmp/perm-prompt-activation-verification.json`. Terminal client PID 1317248 remains on the old executable and needs reopening for native highlighting; live server/plugin update is verified. Npm publication remains deferred.
