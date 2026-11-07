@@ -24,7 +24,7 @@ export const fallbackLabels = { off: "Off", shadow: "Shadow", auto: "Approve" }
 export const presets = {
   "read-only": { title: "Read only", description: "Read files; ask for edits and shell" },
   workspace: { title: "Ask for approval", description: "Local edits; ask for shell and network" },
-  auto: { title: "Approve", description: "Local edits; model reviews requests" },
+  auto: { title: "Approve for me", description: "Local edits; model reviews requests" },
   full: { title: "Full access", description: "Configured limits still apply" },
 }
 export type SessionChange =
@@ -704,9 +704,7 @@ export function PermissionSettings(props: {
     menu(
       "Permissions",
       () =>
-        session()
-          ? `${scopeName(session()!)} · ${reviewLabels[session()!.mode]}`
-          : "Choose a preset for a new session, or configure the server",
+        session() ? `${scopeName(session()!)} · ${reviewLabels[session()!.mode]}` : "New sessions: Ask for approval",
       () => [
         ...(["read-only", "workspace", "auto", "full"] as const).map((preset) => ({
           title: presets[preset].title,
@@ -969,7 +967,7 @@ export function scopeName(state: State) {
 }
 
 export function matchesPreset(state: State | undefined, preset: keyof typeof presets) {
-  if (!state) return false
+  if (!state) return preset === "workspace"
   if (preset === "read-only") return state.preset === "read-only" && state.mode === "manual"
   if (preset === "full") return ["full", "configured"].includes(state.preset) && state.mode === "manual"
   return (

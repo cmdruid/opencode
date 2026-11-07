@@ -4,7 +4,7 @@ import { PluginHost } from "@opencode/core/plugin/host"
 import { Permission } from "@opencode/core/permission"
 import { Model } from "@opencode/schema/model"
 import { Provider } from "@opencode/schema/provider"
-import { Deferred, Effect, Fiber } from "effect"
+import { Clock, Deferred, Effect, Fiber } from "effect"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
 import { settings } from "../../../plugins/permission-review/settings"
@@ -51,7 +51,18 @@ it.live("server settings persist, refresh other readers, clear and reset without
     const other = yield* test.host.session.create({})
     yield* test.host.storage.set(`selection/${parent.id}`, { preset: "shadow", mode: "shadow" })
     yield* test.host.storage.set(`fallback/${parent.id}`, "auto")
-    yield* test.host.storage.set("review/existing", { retained: true })
+    yield* test.host.storage.set("review/existing", {
+      requestID: "existing",
+      sessionID: parent.id,
+      action: "shell",
+      model: options.model,
+      mode: "decision",
+      shadow: true,
+      decision: "escalate",
+      reason: "Existing review",
+      at: yield* Clock.currentTimeMillis,
+      durationMs: 1,
+    })
     yield* reviewer.effect({ ...test.host, options })
     const client = test.host.rpc(Contract)
     const reopened = yield* PluginHost.make(test.plugins, reviewer.id)
@@ -76,7 +87,11 @@ it.live("server settings persist, refresh other readers, clear and reset without
     expect((yield* client.session({ sessionID: parent.id })).fallback?.mode).toBe("auto")
     expect((yield* client.session({ sessionID: other.id })).mode).toBe("manual")
     yield* client.setSession({ sessionID: parent.id, change: { type: "reset", target: "selection" } })
-    expect(yield* client.session({ sessionID: child.id })).toMatchObject({ mode: "manual", modeSource: "server" })
+    expect(yield* client.session({ sessionID: child.id })).toMatchObject({
+      preset: "workspace",
+      mode: "manual",
+      modeSource: "default",
+    })
     yield* client.setSession({ sessionID: parent.id, change: { type: "reset", target: "fallback" } })
     expect((yield* client.session({ sessionID: parent.id })).fallback?.mode).toBe("shadow")
     yield* client.saveSettings({ patch: { actions: null }, reset: ["policy", "minConfidence"] })
@@ -84,7 +99,7 @@ it.live("server settings persist, refresh other readers, clear and reset without
       values: { actions: null, policy: "Configured policy", minConfidence: 0.95 },
       sources: { policy: "configuration", minConfidence: "configuration", actions: "server" },
     })
-    expect(yield* reopened.storage.get("review/existing")).toEqual({ retained: true })
+    expect(yield* reopened.storage.get("review/existing")).toMatchObject({ reason: "Existing review" })
     yield* client.saveSettings({ patch: { mode: "chat", model: Model.Ref.parse("settings/chat") } })
     expect((yield* client.session({ sessionID: parent.id })).fallback).toBeUndefined()
     expect((yield* client.settings({})).values.fallback?.model.variant).toBe(Model.VariantID.make("bounded"))
@@ -146,6 +161,7 @@ it.live("a running review uses its starting threshold while the next request see
       },
     })
     const session = yield* test.host.session.create({ permissions: [{ action: "*", resource: "*", effect: "ask" }] })
+    yield* test.host.rpc(Contract).setSession({ sessionID: session.id, change: { type: "preset", preset: "auto" } })
     yield* addUserTask(session.id, "Inspect this checkout")
     const request = { sessionID: session.id, action: "shell", resources: ["git status"] }
     const running = yield* permission.ask(request).pipe(Effect.forkChild({ startImmediately: true }))

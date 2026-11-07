@@ -48,7 +48,12 @@ export function settingsFixture() {
     },
     change: async (change) => {
       fixture.session = {
-        preset: change.type === "preset" ? change.preset : (fixture.session?.preset ?? "configured"),
+        preset:
+          change.type === "preset"
+            ? change.preset
+            : change.type === "reset" && change.target === "selection"
+              ? "workspace"
+              : (fixture.session?.preset ?? "workspace"),
         mode:
           change.type === "reviewer"
             ? change.mode
@@ -57,8 +62,8 @@ export function settingsFixture() {
                 ? "auto"
                 : "manual"
               : change.type === "reset" && change.target === "selection"
-                ? snapshot().values.defaultMode
-                : (fixture.session?.mode ?? snapshot().values.defaultMode),
+                ? "manual"
+                : (fixture.session?.mode ?? "manual"),
         reviewWith:
           change.type === "automation"
             ? change.mode

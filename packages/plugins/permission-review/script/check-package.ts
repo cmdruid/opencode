@@ -223,6 +223,16 @@ try {
   assert.equal(plugin?.state.status, "active")
   assert.equal(plugin?.features.tui, true)
   const session = await request<{ data: { id: string } }>("/api/session", { location: { directory: project } })
+  const defaultState = await rpc<{ preset: string; mode: string }>("session", { sessionID: session.data.id })
+  assert.equal(defaultState.preset, "workspace")
+  assert.equal(defaultState.mode, "manual")
+  const manual = await request<{ data: { id: string; effect: string } }>(`/api/session/${session.data.id}/permission`, {
+    action: "shell",
+    resources: ["git status"],
+  })
+  assert.equal(manual.data.effect, "ask")
+  assert.equal(calls.length, 0)
+  await rpc("setSession", { sessionID: session.data.id, change: { type: "preset", preset: "auto" } })
   // Seed explicit authorization through the real native-action RPC; neither request executes a tool.
   const first = await request<{ data: { id: string; effect: string } }>(`/api/session/${session.data.id}/permission`, {
     action: "read",
@@ -271,6 +281,7 @@ try {
   })
   const context = await request<{ data: { type: string }[] }>(`/api/session/${compacted.data.id}/context`)
   assert.equal(context.data.filter((message) => message.type === "user").length, 0)
+  await rpc("setSession", { sessionID: compacted.data.id, change: { type: "preset", preset: "auto" } })
   const restored = await request<{ data: { effect: string } }>(`/api/session/${compacted.data.id}/permission`, {
     action: "read",
     resources: ["README.md"],
@@ -323,6 +334,7 @@ try {
       },
     ],
   })
+  await rpc("setSession", { sessionID: answered.data.id, change: { type: "preset", preset: "auto" } })
   await rpc("saveSettings", {
     patch: {
       reviewWith: "both",
@@ -467,6 +479,7 @@ try {
     classifierEscalationResolved: true,
     compactPromptVerified: true,
     fastRulesVerified: true,
+    manualDefaultVerified: true,
     diagnosticExportVerified: true,
     fullDiagnosticPreserved: true,
     promptWidths: [44, 112],

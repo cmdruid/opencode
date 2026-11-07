@@ -256,3 +256,12 @@ Configuration backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T21
 Activation report: `/tmp/perm-followup-activation-verification.json`.
 
 Publication remains on hold (`private: true`), with no npm release, remote push or upstream PR changes. Upstream compatibility work follows local delivery of this accepted scope.
+
+## Human approval by default — 2026-11-07
+
+Version `0.1.0-alpha.11` defaults sessions without a saved or inherited selection to **Ask for approval** (workspace scope, Manual mode). Shell, network and other restricted requests stay with the human without calling either reviewer, even if Global Policy enables automation. Ordinary workspace reads/edits keep the existing workspace-preset behavior. Saved selections, inherited selections and legacy session modes remain intact; resetting a selection returns to human approval. The menu marks this default before session creation and renames its automatic preset to **Approve for me**. Classifier/reviewer mode labels remain unchanged.
+
+Validation: full plugin suite 62 passed / 558 assertions; six affected Core suites 39 passed / 469 assertions. Settings renderer at 44/112 columns repeated ten times: 180 passed / 1670 assertions. Official Core/plugin TypeScript checks and root `bun run check` (36/36 tasks) passed. Exact-artifact integration checks passed against the existing installed host, including a fresh session's manual default and zero model calls before explicit opt-in: `/tmp/permission-package-check-inHgpJ/verification.json`.
+
+Artifact SHA256: `60822114b90fe4281ab72dddfabec420cdaf9c053651d2242a0dd5246a409910`.
+Staged at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.11/node_modules/@cmdcode/opencode-auto-permissions`. Live activation is pending because OpenCode has a running session; alpha.10 remains active. No host replacement is needed. npm publication remains on hold.

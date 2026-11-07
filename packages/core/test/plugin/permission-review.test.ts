@@ -33,6 +33,7 @@ for (const shadow of [true, false]) {
             },
           },
         })
+        yield* host.storage.set(`selection/${session.id}`, { preset: "auto", mode: shadow ? "shadow" : "auto" })
         const event = yield* hooks.trigger("permission", "experimental.review", {
           request: {
             id: Permission.ID.create(),
@@ -85,7 +86,7 @@ it.live("session review modes persist, stay local to the session, and leave manu
     const client = host.rpc(Contract)
     // The generic HTTP RPC envelope encodes Schema.Json, including optional state fields.
     expect(Schema.is(Schema.Json)(yield* client.session({ sessionID: session.id }))).toBe(true)
-    expect((yield* client.session({ sessionID: session.id })).mode).toBe("shadow")
+    expect((yield* client.session({ sessionID: session.id })).mode).toBe("manual")
     yield* client.setSession({ sessionID: session.id, change: { type: "reviewer", mode: "manual" } })
     const request = { id: Permission.ID.create(), sessionID: session.id, action: "read", resources: ["README.md"] }
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result).toBeUndefined()
@@ -94,7 +95,7 @@ it.live("session review modes persist, stay local to the session, and leave manu
     expect(Schema.is(Schema.Json)(yield* client.session({ sessionID: session.id }))).toBe(true)
     expect((yield* hooks.trigger("permission", "experimental.review", { request })).result?.decision).toBe("approve")
     expect(calls).toHaveLength(1)
-    expect((yield* client.session({ sessionID: other.id })).mode).toBe("shadow")
+    expect((yield* client.session({ sessionID: other.id })).mode).toBe("manual")
     const reopened = yield* PluginHost.make(plugins, reviewer.id)
     expect(yield* reopened.storage.get(`selection/${session.id}`)).toMatchObject({ mode: "auto" })
     expect(
@@ -178,6 +179,7 @@ for (const trial of [
           },
         },
       })
+      yield* host.storage.set(`selection/${session.id}`, { preset: "auto", mode: trial.shadow ? "shadow" : "auto" })
       const event = yield* hooks.trigger("permission", "experimental.review", {
         request: {
           id: Permission.ID.create(),
@@ -223,6 +225,7 @@ it.live("pending requests receive a concise summary while history retains the fu
         },
       },
     })
+    yield* host.rpc(Contract).setSession({ sessionID: session.id, change: { type: "preset", preset: "auto" } })
     const event = yield* hooks.trigger("permission", "experimental.review", {
       request: { id: Permission.ID.create(), sessionID: session.id, action: "shell", resources: ["tracker.sh list"] },
     })

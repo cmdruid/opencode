@@ -210,6 +210,7 @@ it.live("custom chat endpoint uses its stored key and preserves schema-constrain
       title: "Local transport fixture",
       permissions: [{ action: "*", resource: "*", effect: "ask" }],
     })
+    yield* test.host.rpc(Contract).setSession({ sessionID: session.id, change: { type: "preset", preset: "auto" } })
     yield* addUserTask(session.id, "Inspect this synthetic checkout")
     const decision = yield* permission.ask({ sessionID: session.id, action: "shell", resources: ["git status"] })
     expect(decision.effect).toBe("allow")
@@ -308,6 +309,7 @@ it.live("custom connections resolve models defined by the later configuration pl
       title: "Late config connection fixture",
       permissions: [{ action: "*", resource: "*", effect: "ask" }],
     })
+    yield* host.rpc(Contract).setSession({ sessionID: session.id, change: { type: "preset", preset: "auto" } })
     yield* addUserTask(session.id, "Inspect this synthetic checkout")
     const ask = () => permission.ask({ sessionID: session.id, action: "shell", resources: ["git status"] })
     expect((yield* ask()).effect).toBe("allow")

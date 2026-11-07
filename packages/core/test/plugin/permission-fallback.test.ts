@@ -59,6 +59,7 @@ for (const choice of ["approve", "escalate"] as const)
         },
       })
       const client = host.rpc(Contract)
+      yield* client.setSession({ sessionID: session.id, change: { type: "preset", preset: "auto" } })
       const request = { sessionID: session.id, action: "shell", resources: ["git status"] }
       const empty = yield* permission.ask(request)
       expect(empty.effect).toBe("ask")

@@ -67,6 +67,26 @@ async function fixture(width = 112) {
 }
 
 test.each([44, 112])(
+  "new-session menu marks Ask for approval and offers Approve for me at %s columns",
+  async (width) => {
+    await using f = await fixture(width)
+    const selected = () =>
+      f.app
+        .captureCharFrame()
+        .split("\n")
+        .find((line) => /[●▪]/.test(line))
+    expect(selected()).toContain("Ask for approval")
+    expect(f.app.captureCharFrame()).toContain("Approve for me")
+    expect(f.data.fixture.session).toBeUndefined()
+    await f.data.actions.change({ type: "preset", preset: "workspace" })
+    await f.refresh()
+    expect(selected()).toContain("Ask for approval")
+    await f.open("Approve for me")
+    expect(f.data.fixture.session).toMatchObject({ preset: "auto", mode: "auto" })
+  },
+)
+
+test.each([44, 112])(
   "settings overview and long values fit at %s columns without creating a session",
   async (width) => {
     await using f = await fixture(width)

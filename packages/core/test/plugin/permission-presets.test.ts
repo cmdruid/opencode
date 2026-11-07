@@ -44,6 +44,36 @@ const setup = Effect.gen(function* () {
   return { host, session, permission, calls, client: host.rpc(Contract) }
 })
 
+it.live("new sessions ask without model calls even when global automation is enabled", () =>
+  Effect.gen(function* () {
+    const test = yield* setup
+    yield* test.client.saveSettings({ patch: { defaultMode: "auto", reviewerMode: "auto" } })
+    expect(yield* test.client.session({ sessionID: test.session.id })).toMatchObject({
+      preset: "workspace",
+      mode: "manual",
+      modeSource: "default",
+    })
+    for (const action of ["shell", "webfetch"]) {
+      expect((yield* test.permission.ask({ sessionID: test.session.id, action, resources: ["fixture"] })).effect).toBe(
+        "ask",
+      )
+    }
+    for (const action of ["read", "edit"]) {
+      expect(
+        (yield* test.permission.ask({ sessionID: test.session.id, action, resources: ["README.md"] })).effect,
+      ).toBe("allow")
+    }
+    expect(test.calls).toEqual([])
+    expect(yield* test.host.storage.get(`selection/${test.session.id}`)).toBeUndefined()
+    yield* test.host.storage.set(`mode/${test.session.id}`, "auto")
+    expect(yield* test.client.session({ sessionID: test.session.id })).toMatchObject({
+      preset: "configured",
+      mode: "auto",
+      modeSource: "session",
+    })
+  }),
+)
+
 for (const preset of ["configured", "read-only", "workspace", "auto", "shadow", "full"] as const) {
   it.live(`${preset} evaluates real permissions without running tools or calling a reviewer for probes`, () =>
     Effect.gen(function* () {
@@ -216,7 +246,7 @@ it.live("changing the reviewer preserves the selected scope, including Shadow te
   }),
 )
 
-it.live("presets persist, inherit through subagents, isolate unrelated sessions and reset to configured behavior", () =>
+it.live("presets persist, inherit through subagents, isolate unrelated sessions and reset to human approval", () =>
   Effect.gen(function* () {
     const test = yield* setup
     const child = yield* test.host.session.create({ parentID: test.session.id })
@@ -232,7 +262,7 @@ it.live("presets persist, inherit through subagents, isolate unrelated sessions 
     expect(yield* test.permission.allows({ sessionID: grandchild.id, action: "edit", resources: ["index.ts"] })).toBe(
       false,
     )
-    expect((yield* test.client.session({ sessionID: other.id })).preset).toBe("configured")
+    expect((yield* test.client.session({ sessionID: other.id })).preset).toBe("workspace")
     const plugins = yield* Plugin.Service
     const reopened = yield* PluginHost.make(plugins, reviewer.id)
     expect(yield* reopened.storage.get(`selection/${test.session.id}`)).toEqual({ preset: "read-only", mode: "manual" })
@@ -244,7 +274,7 @@ it.live("presets persist, inherit through subagents, isolate unrelated sessions 
     yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reset", target: "selection" } })
     expect(
       yield* test.permission.allows({ sessionID: test.session.id, action: "shell", resources: ["rm -rf /"] }),
-    ).toBe(true)
+    ).toBe(false)
     expect((yield* test.client.session({ sessionID: child.id })).preset).toBe("workspace")
     const rpc = yield* Rpc.Service
     expect(
@@ -288,6 +318,17 @@ it.live("fast rules respect explicit denials, manual and shadow modes and never 
         },
       },
     })
+    const client = host.rpc(Contract)
+    expect(yield* client.session({ sessionID: session.id })).toMatchObject({
+      preset: "workspace",
+      mode: "manual",
+      modeSource: "default",
+    })
+    expect((yield* permission.ask({ sessionID: session.id, action: "skill", resources: ["tracker"] })).effect).toBe(
+      "ask",
+    )
+    expect(calls).toBe(0)
+    yield* client.setSession({ sessionID: session.id, change: { type: "preset", preset: "auto" } })
     yield* Effect.promise(() => Bun.write(path.join(host.location.directory, "allowed.txt"), "fixture"))
     yield* Effect.promise(() => Bun.write(path.join(host.location.directory, "blocked.txt"), "fixture"))
     for (const request of [
@@ -301,7 +342,6 @@ it.live("fast rules respect explicit denials, manual and shadow modes and never 
       { action: "read", resources: ["blocked.txt"] },
     ])
       expect((yield* permission.ask({ ...request, sessionID: session.id })).effect).toBe("deny")
-    const client = host.rpc(Contract)
     expect((yield* client.history({ sessionID: session.id })).map((item) => item.path)).toContain("tool-rule")
     for (const mode of ["shadow", "manual"] as const) {
       yield* client.setSession({

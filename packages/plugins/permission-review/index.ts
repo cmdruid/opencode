@@ -50,12 +50,7 @@ export default Plugin.define({
       } while (after)
       return entries.toSorted((a, b) => b.at - a.at)
     })
-    const mode = Effect.fn(function* (sessionID: string, values: typeof Options.Type) {
-      const value = yield* ctx.storage.get(`mode/${sessionID}`)
-      if (value === undefined) return values.defaultMode ?? "auto"
-      return Option.getOrElse(Schema.decodeUnknownOption(ReviewMode)(value), () => "manual" as const)
-    })
-    const selection = Effect.fn(function* (sessionID: AssertInput["sessionID"], values: typeof Options.Type) {
+    const selection = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
       let session = yield* ctx.session.get({ sessionID }).pipe(Effect.orDie)
       while (true) {
         const value = yield* ctx.storage.get(`selection/${session.id}`)
@@ -70,7 +65,14 @@ export default Plugin.define({
         if (!session.parentID) break
         session = yield* ctx.session.get({ sessionID: session.parentID }).pipe(Effect.orDie)
       }
-      return { preset: "configured" as const, mode: yield* mode(sessionID, values) }
+      const legacy = yield* ctx.storage.get(`mode/${sessionID}`)
+      if (legacy !== undefined)
+        return {
+          preset: "configured" as const,
+          mode: Option.getOrElse(Schema.decodeUnknownOption(ReviewMode)(legacy), () => "manual" as const),
+        }
+      // Automation requires an explicit session choice, even when global model policies are automatic.
+      return { preset: "workspace" as const, mode: "manual" as const }
     })
     const automation = Effect.fn(function* (sessionID: string, values: typeof Options.Type) {
       const value = yield* ctx.storage.get(`automation/${sessionID}`)
@@ -84,7 +86,7 @@ export default Plugin.define({
         return Option.getOrElse(Schema.decodeUnknownOption(FallbackMode)(value), () => "off" as const)
       // Legacy chat-only sessions stored their reviewer mode with the preset.
       if (values.mode !== "decision") {
-        const legacy = yield* selection(sessionID, values)
+        const legacy = yield* selection(sessionID)
         if (
           legacy.preset !== "configured" ||
           legacy.inheritedFrom ||
@@ -108,7 +110,7 @@ export default Plugin.define({
       const configured = reviewOptions(configState.values)
       const values = { ...configured, reviewWith: yield* automation(sessionID, configured) }
       const chat = yield* fallback(sessionID, values)
-      const selected = yield* selection(sessionID, values)
+      const selected = yield* selection(sessionID)
       const explicit = yield* ctx.storage.get(`selection/${sessionID}`)
       const legacy = yield* ctx.storage.get(`mode/${sessionID}`)
       const chatMode = yield* ctx.storage.get(`fallback/${sessionID}`)
@@ -124,7 +126,7 @@ export default Plugin.define({
           ? ("ancestor" as const)
           : explicit !== undefined || legacy !== undefined
             ? ("session" as const)
-            : configState.sources.defaultMode,
+            : ("default" as const),
         fallbackSource: chatMode !== undefined ? ("session" as const) : configState.sources.reviewerMode,
         model:
           values.reviewWith === "reviewer" && chat
@@ -173,7 +175,7 @@ export default Plugin.define({
             })
           }
           if (change.type === "reviewer") {
-            const selected = yield* selection(input.sessionID, values)
+            const selected = yield* selection(input.sessionID)
             yield* ctx.storage.set(`selection/${input.sessionID}`, { preset: selected.preset, mode: change.mode })
           }
           const next = yield* state(input.sessionID).pipe(Effect.orDie)
@@ -239,7 +241,7 @@ export default Plugin.define({
     yield* ctx.permission.hook("evaluate", (event) =>
       Effect.gen(function* () {
         if (event.effect === "deny") return
-        const selected = yield* selection(event.sessionID, yield* currentOptions.pipe(Effect.orDie))
+        const selected = yield* selection(event.sessionID)
         // Scope presets may tighten OpenCode's decision, never relax it.
         if (selected.preset === "configured" || selected.preset === "full") return
         // Glob and grep authorize their search directory through external_directory first.
@@ -261,7 +263,7 @@ export default Plugin.define({
         const configured = yield* currentOptions.pipe(Effect.orDie)
         const values = { ...configured, reviewWith: yield* automation(event.request.sessionID, configured) }
         if (values.actions && !values.actions.includes(event.request.action)) return
-        const selected = yield* selection(event.request.sessionID, values)
+        const selected = yield* selection(event.request.sessionID)
         const chatOnly = values.reviewWith === "reviewer" && values.mode === "decision"
         const reviewerOnly = chatOnly || values.mode !== "decision"
         const chatMode = yield* reviewerMode(event.request.sessionID, values)
