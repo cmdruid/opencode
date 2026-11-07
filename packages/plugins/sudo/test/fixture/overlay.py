@@ -35,17 +35,15 @@ os.execv(args[0],args)
             wait_for('FIXTURE_READY')
             command('send-keys','-t','test','r')
             screen=wait_for('FAKE_AUTH_READY:')
-            assert 'OpenCode conversation' in screen, screen
+            assert 'OpenCode conversation UPDATED' in screen, screen
             assert 'OpenCode | Run as root' in screen, screen
             assert screen.splitlines().index('--- OpenCode | Run as root ---') == rows - 8, screen
             pathlib.Path(f'/tmp/opencode-sudo-ui-spike-{columns}.txt').write_text(screen)
             command('send-keys','-t','test','DUMMY_NATIVE_AUTH_PASSWORD','Enter')
-            screen=wait_for('Ctrl+C to close')
-            assert 'OpenCode | Run as root' in screen, screen
-            command('send-keys','-t','test','C-c')
             deadline=time.monotonic()+5
             while not (directory/'release.json').exists() and time.monotonic()<deadline: time.sleep(.02)
             assert json.loads((directory/'release.json').read_text())['released']
+            command('send-keys','-t','test','z')
             assert 'DUMMY_NATIVE_AUTH_PASSWORD' not in (directory/'stdin.log').read_text()
             (directory/'release.json').unlink()
             print(f'PASS {columns}x{rows}')

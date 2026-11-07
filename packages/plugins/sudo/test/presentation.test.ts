@@ -3,7 +3,7 @@ import { TextRenderable } from "@opentui/core"
 import { createTestRenderer } from "@opentui/core/testing"
 import { parseThemeDocument, resolveThemeDocument } from "@opencode/theme/tui"
 import themeSource from "../../../tui/src/theme/assets/v2/opencode2.json"
-import { presentation } from "../native"
+import { presentation, preparePresentation, takeTerminal } from "../native"
 
 test.each(["light", "dark", "custom"] as const)(
   "native presentation uses %s dialog tokens and safe pre-authentication text",
@@ -41,4 +41,52 @@ test("native presentation falls back to monochrome branding without a frame leas
   expect(frame.length).toBe(40)
   expect(frame.readUInt32BE(16)).toBe(0xffffffff)
   await app.renderer.resume()
+})
+
+test.each([40, 120])("handoff captures fresh successive frames at %s columns", async (width) => {
+  await using app = await createTestRenderer({ width, height: 24 })
+  const text = new TextRenderable(app.renderer, { id: "background", content: "OLD conversation" })
+  app.renderer.root.add(text)
+  await app.renderOnce()
+  for (const content of ["NEW conversation", "NEXT conversation"]) {
+    text.content = content
+    const frame = await preparePresentation(app.renderer)
+    expect(frame.subarray(40).toString()).toContain(content)
+    expect(frame.subarray(40).toString()).not.toContain("OLD conversation")
+  }
+})
+
+test("handoff waits beyond an in-flight frame", async () => {
+  await using app = await createTestRenderer({ width: 80, height: 24 })
+  const text = new TextRenderable(app.renderer, { id: "background", content: "OLD conversation" })
+  app.renderer.root.add(text)
+  await app.renderOnce()
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const callback = async () => {
+    entered.resolve()
+    await release.promise
+  }
+  app.renderer.setFrameCallback(callback)
+  const rendering = app.renderOnce()
+  await entered.promise
+  const frameID = app.renderer.frameId
+  text.content = "NEW conversation"
+  const prepared = preparePresentation(app.renderer)
+  release.resolve()
+  const frame = await prepared
+  expect(app.renderer.frameId).toBeGreaterThan(frameID)
+  expect(frame.subarray(40).toString()).toContain("NEW conversation")
+  await rendering
+})
+
+test("aborting a fresh-frame wait removes listeners and never suspends or launches native code", async () => {
+  await using app = await createTestRenderer({ width: 80, height: 24 })
+  const controller = new AbortController()
+  const listeners = app.renderer.listenerCount("frame")
+  const result = takeTerminal(app.renderer, "/must-not-be-launched", [], undefined, controller.signal)
+  controller.abort(new Error("cancelled before handoff"))
+  await expect(result).rejects.toThrow("cancelled before handoff")
+  expect(app.renderer.listenerCount("frame")).toBe(listeners)
+  expect(app.renderer.controlState).not.toBe("explicit_suspended")
 })

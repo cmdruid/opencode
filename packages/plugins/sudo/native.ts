@@ -88,6 +88,48 @@ export function presentation(renderer: CliRenderer, theme?: Plugin.Context["them
   return Buffer.concat([header, size, bytes])
 }
 
+export async function preparePresentation(
+  renderer: CliRenderer,
+  theme?: Plugin.Context["theme"],
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted()
+  if (renderer.isDestroyed) throw new Error("Renderer was destroyed")
+  await new Promise<void>((resolve, reject) => {
+    // A callback queued during a frame runs in the next frame, before its paint.
+    // Waiting for that frame's completion excludes an already in-flight snapshot.
+    let painted = false
+    const callback = renderer.requestAnimationFrame(() => {
+      painted = true
+    })
+    const cleanup = () => {
+      renderer.cancelAnimationFrame(callback)
+      renderer.off("frame", frame)
+      renderer.off("destroy", destroyed)
+      signal?.removeEventListener("abort", aborted)
+    }
+    const frame = () => {
+      if (!painted) return
+      cleanup()
+      resolve()
+    }
+    const destroyed = () => {
+      cleanup()
+      reject(new Error("Renderer was destroyed"))
+    }
+    const aborted = () => {
+      cleanup()
+      reject(signal?.reason)
+    }
+    renderer.on("frame", frame)
+    renderer.on("destroy", destroyed)
+    signal?.addEventListener("abort", aborted, { once: true })
+    renderer.requestRender()
+  })
+  signal?.throwIfAborted()
+  return presentation(renderer, theme)
+}
+
 /** Only exit 0 certifies that native code flushed input and restored the foreground terminal. */
 export async function takeTerminal(
   renderer: CliRenderer,
@@ -98,7 +140,7 @@ export async function takeTerminal(
 ) {
   if (renderer.isDestroyed || renderer.controlState === "explicit_suspended")
     throw new Error("Terminal is already in use")
-  const screen = presentation(renderer, theme)
+  const screen = await preparePresentation(renderer, theme, signal)
   signal?.throwIfAborted()
   await renderer.suspend()
   if (signal?.aborted) {
@@ -111,7 +153,7 @@ export async function takeTerminal(
       stdio: ["inherit", "inherit", "inherit", "pipe"],
       env: { PATH: "/usr/bin:/bin", LANG: "C", TERM: "dumb" },
     })
-    // Cancellation requests native shutdown; only its normal guarded exit permits resume.
+    // Cancellation requests native shutdown; only verified cleanup permits resume.
     const cancel = () => {
       child.kill("SIGTERM")
     }
@@ -133,6 +175,9 @@ export async function takeTerminal(
     )
     return false
   }
+  // resume() replays the ReadStream buffer through raw-input diagnostics. Native
+  // tcflush cannot discard bytes already buffered by JavaScript before suspension.
+  while (renderer.stdin.read() !== null) {}
   await renderer.resume()
   return true
 }

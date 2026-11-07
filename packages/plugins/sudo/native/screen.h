@@ -104,7 +104,9 @@ static void screen_resize(int tty, struct screen *screen) {
   dprintf(tty, "\033[r\033[%d;1H", screen->rows);
 }
 
-static void screen_end(int tty, struct screen *screen) {
-  dprintf(tty, "\033[0m\033[?6l\033[r\033[?1049l");
+static int screen_end(int tty, struct screen *screen) {
+  char reset[] = "\033[0m\033[?6l\033[r\033[?1049l";
+  int result = transfer(tty, reset, sizeof(reset) - 1, 1);
   free(screen->background);
+  return result;
 }

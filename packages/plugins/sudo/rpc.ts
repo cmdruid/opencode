@@ -5,6 +5,7 @@ export const Request = Schema.Struct({
   id: Schema.String,
   sessionID: Schema.String,
   command: Schema.String,
+  reason: Schema.String,
   cwd: Schema.String,
   host: Schema.String,
   user: Schema.String,

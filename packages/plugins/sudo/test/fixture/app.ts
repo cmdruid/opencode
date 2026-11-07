@@ -1,8 +1,18 @@
+import type { TestRendererSetup } from "@opentui/core/testing"
+import type { createRequests } from "../../requests"
 import path from "node:path"
 import { createAppFixture } from "../../../../tui/test/fixture/app"
 import { directory, json } from "../../../../tui/test/fixture/tui-client"
 
-export async function fixture(options: { shortcut?: string; pending?: boolean } = {}) {
+export async function fixture(
+  options: {
+    shortcut?: string
+    pending?: boolean
+    setup?: TestRendererSetup
+    plugin?: string
+    requests?: ReturnType<typeof createRequests>
+  } = {},
+) {
   const session = {
     id: "ses_sudo_tui",
     title: "Sudo fixture",
@@ -16,6 +26,7 @@ export async function fixture(options: { shortcut?: string; pending?: boolean } 
     id: "request",
     socket: "/tmp/unavailable-sudo-request",
     sessionID: session.id,
+    reason: "Inspect the privileged service identity.",
     command: "id -u",
     cwd: directory,
     host: "test-server",
@@ -24,12 +35,13 @@ export async function fixture(options: { shortcut?: string; pending?: boolean } 
   const cancelled = Promise.withResolvers<unknown>()
   const state = { pending: options.pending ?? true }
   const app = await createAppFixture({
+    setup: options.setup,
     width: 100,
     height: 30,
     config: {
       animations: false,
       keybinds: options.shortcut ? { "command.palette.show": options.shortcut } : undefined,
-      plugins: [path.resolve(import.meta.dir, "../..")],
+      plugins: [options.plugin ?? path.resolve(import.meta.dir, "../..")],
     },
     args: { sessionID: session.id },
     fetch: async (url, req) => {
@@ -37,10 +49,13 @@ export async function fixture(options: { shortcut?: string; pending?: boolean } 
       if (url.pathname === `/api/session/${session.id}`) return json({ data: session })
       if (url.pathname === `/api/session/${session.id}/message`) return json({ data: [], cursor: {} })
       if (url.pathname === `/api/session/${session.id}/inbox`) return json({ data: [] })
-      if (url.pathname === "/api/rpc/experimental.sudo/list") return json({ output: state.pending ? [request] : [] })
+      if (url.pathname === "/api/rpc/experimental.sudo/list")
+        return json({ output: options.requests?.list(session.id) ?? (state.pending ? [request] : []) })
       if (url.pathname === "/api/rpc/experimental.sudo/cancel") {
         state.pending = false
-        cancelled.resolve(await req.json())
+        const body = await req.json()
+        options.requests?.cancel(body.input.id)
+        cancelled.resolve(body)
         return json({ output: true })
       }
     },

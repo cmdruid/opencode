@@ -123,9 +123,6 @@ static int supervise(const char *socket_path, const char *id) {
   guarded.c_lflag &= (tcflag_t)~(ECHO | ECHONL | ICANON);
   guarded.c_cc[VMIN] = 1;
   guarded.c_cc[VTIME] = 0;
-  if (tcsetattr(tty, TCSAFLUSH, &guarded)) return 125;
-
-  screen_begin(tty, &screen);
   int connection = -1;
   char *cwd = NULL;
   char *command = NULL;
@@ -136,43 +133,45 @@ static int supervise(const char *socket_path, const char *id) {
   int timed_out = 0;
   int status = 0;
   pid_t child = -1;
+  if (tcsetattr(tty, TCSAFLUSH, &guarded)) goto cleanup;
+  screen_begin(tty, &screen);
   struct sockaddr_un address = { .sun_family = AF_UNIX };
-  if (strlen(socket_path) >= sizeof(address.sun_path) || strlen(id) != 36) goto guard;
+  if (strlen(socket_path) >= sizeof(address.sun_path) || strlen(id) != 36) goto cleanup;
   memcpy(address.sun_path, socket_path, strlen(socket_path) + 1);
   connection = socket(AF_UNIX, SOCK_STREAM, 0);
   if (connection < 0 || connect(connection, (struct sockaddr *)&address, sizeof(address))) {
     dprintf(STDERR_FILENO, "OpenCode sudo: local request unavailable. Run the TUI on the server through SSH.\n");
-    goto guard;
+    goto cleanup;
   }
-  if (fcntl(connection, F_SETFD, FD_CLOEXEC)) goto guard;
+  if (fcntl(connection, F_SETFD, FD_CLOEXEC)) goto cleanup;
   struct timeval handshake_timeout = { .tv_sec = 5 };
   if (setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &handshake_timeout, sizeof(handshake_timeout)) ||
-      setsockopt(connection, SOL_SOCKET, SO_SNDTIMEO, &handshake_timeout, sizeof(handshake_timeout))) goto guard;
-  if (transfer(connection, (void *)id, 36, 1)) goto guard;
+      setsockopt(connection, SOL_SOCKET, SO_SNDTIMEO, &handshake_timeout, sizeof(handshake_timeout))) goto cleanup;
+  if (transfer(connection, (void *)id, 36, 1)) goto cleanup;
   char magic[8];
-  if (transfer(connection, magic, sizeof(magic), 0) || memcmp(magic, "OCSUDO1\0", 8)) goto guard;
+  if (transfer(connection, magic, sizeof(magic), 0) || memcmp(magic, "OCSUDO1\0", 8)) goto cleanup;
   cwd = field(connection);
   command = field(connection);
   uint32_t timeout;
-  if (!cwd || !command || transfer(connection, &timeout, sizeof(timeout), 0)) goto guard;
+  if (!cwd || !command || transfer(connection, &timeout, sizeof(timeout), 0)) goto cleanup;
   timeout = ntohl(timeout);
-  if (!timeout || timeout > 2147483647) goto guard;
+  if (!timeout || timeout > 2147483647) goto cleanup;
 
 
-  if (!mkdtemp(directory)) goto guard;
+  if (!mkdtemp(directory)) goto cleanup;
   snprintf(fifo, sizeof(fifo), "%s/output", directory);
-  if (mkfifo(fifo, 0600) || (output = open(fifo, O_RDWR | O_NONBLOCK | O_CLOEXEC)) < 0) goto guard;
+  if (mkfifo(fifo, 0600) || (output = open(fifo, O_RDWR | O_NONBLOCK | O_CLOEXEC)) < 0) goto cleanup;
 
-  if (interrupted) goto guard;
+  if (interrupted) goto cleanup;
   struct termios authentication = original;
   authentication.c_lflag &= (tcflag_t)~(ECHO | ECHONL);
-  if (tcsetattr(tty, TCSAFLUSH, &authentication)) goto guard;
+  if (tcsetattr(tty, TCSAFLUSH, &authentication)) goto cleanup;
   dprintf(tty, "System sudo · Ctrl+C cancels.\r\n");
   // Keep sudo's post-authentication entry bound to this running image, even during a package update.
   char executable[64];
   snprintf(executable, sizeof(executable), "/proc/%ld/exe", (long)getpid());
   child = fork();
-  if (child < 0) goto guard;
+  if (child < 0) goto cleanup;
   if (!child) {
     int input = open("/dev/null", O_RDONLY);
     if (input < 0 || dup2(input, STDIN_FILENO) < 0 || dup2(tty, STDOUT_FILENO) < 0 || dup2(tty, STDERR_FILENO) < 0) _exit(126);
@@ -222,13 +221,25 @@ static int supervise(const char *socket_path, const char *id) {
         }
         if (count) (void)frame(connection, 'O', buffer, (uint32_t)count);
       }
+      child = -1;
       result = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
       break;
     }
     if (ended < 0 && errno != EINTR) break;
   }
 
-guard:
+cleanup:
+  // Only a successful wait proves the authentication process has gone away.
+  if (child > 0) return 125;
+  // Late cancellation cannot interrupt restoration or target a reaped PID.
+  sigset_t blocked;
+  sigemptyset(&blocked);
+  sigaddset(&blocked, SIGINT);
+  sigaddset(&blocked, SIGTERM);
+  sigaddset(&blocked, SIGHUP);
+  sigaddset(&blocked, SIGWINCH);
+  if (sigprocmask(SIG_BLOCK, &blocked, NULL)) return 125;
+  interrupted = 0;
   if (output >= 0) close(output);
   if (fifo[0]) unlink(fifo);
   if (strstr(directory, "XXXXXX") == NULL) rmdir(directory);
@@ -237,22 +248,18 @@ guard:
   close(connection);
   free(cwd);
   free(command);
-  // Treat Ctrl+C as a byte only after sudo exits; a prior SIGINT cannot dismiss this guard.
-  guarded.c_lflag &= (tcflag_t)~ISIG;
-  if (tcsetattr(tty, TCSAFLUSH, &guarded)) return 125;
-  screen_color(tty, &screen, 0);
-  dprintf(tty, "\r\nFinished (exit %d).\r\n", result);
-  screen_color(tty, &screen, 4);
-  dprintf(tty, "Ctrl+C to close.\r\n");
-  unsigned char key = 0;
-  while (key != 3) {
-    ssize_t count = read(tty, &key, 1);
-    if (resized) { resized = 0; screen_resize(tty, &screen); }
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) return 125;
-  }
-  screen_end(tty, &screen);
-  if (tcflush(tty, TCIFLUSH) || tcsetattr(tty, TCSANOW, &original) || tcsetpgrp(tty, previous)) return 125;
+  if (screen_end(tty, &screen)) return 125;
+  // Discard unread input as the saved attributes are restored, before giving
+  // the terminal back. POSIX allows partial tcsetattr success: verify it.
+  if (tcsetattr(tty, TCSAFLUSH, &original)) return 125;
+  struct termios restored;
+  if (tcgetattr(tty, &restored) ||
+      restored.c_iflag != original.c_iflag || restored.c_oflag != original.c_oflag ||
+      restored.c_cflag != original.c_cflag || restored.c_lflag != original.c_lflag ||
+      memcmp(restored.c_cc, original.c_cc, NCCS) ||
+      cfgetispeed(&restored) != cfgetispeed(&original) ||
+      cfgetospeed(&restored) != cfgetospeed(&original)) return 125;
+  if (tcsetpgrp(tty, previous) || tcgetpgrp(tty) != previous) return 125;
   close(tty);
   return 0;
 }

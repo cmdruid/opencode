@@ -1,4 +1,5 @@
 """Real PTY, production broker/renderer/handoff, unprivileged substitute for sudo. No actual credentials."""
+import hashlib
 import fcntl
 import struct
 import termios
@@ -53,20 +54,35 @@ os.execv(args[0], args)
     subprocess.run([
         "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-DOPENCODE_SUDO_TEST",
         '-DSUDO_PATH="' + str(fake) + '"',
-        str(package / "native/helper.c"), "-o", str(helper),
+        str(pathlib.Path(os.environ.get("SUDO_NATIVE_SOURCE", str(package / "native"))) / "helper.c"), "-o", str(helper),
+        str(package / "test/fixture/cleanup.c"),
+        '-DTEST_CLEANUP_PATH="' + str(temporary / "cleanup") + '"',
+        '-DTEST_FAILURE="' + scenario + '"',
+        "-Wl,--wrap=tcsetattr", "-Wl,--wrap=tcgetattr", "-Wl,--wrap=tcsetpgrp", "-Wl,--wrap=tcgetpgrp",
         *([
             str(package / "test/fixture/clock.c"),
             '-DTEST_CLOCK_PATH="' + str(temporary / "clock") + '"',
             "-Wl,--wrap=clock_gettime", "-Wl,--wrap=poll",
         ] if scenario == "long-auth" else []),
     ], check=True)
+    if scenario == "loaded":
+        bundle = temporary / "plugin"
+        bundle.mkdir()
+        for name in ("package.json", "index.ts", "rpc.ts", "requests.ts", "tui.js"):
+            shutil.copy2(package / name, bundle / name)
+        (bundle / "node_modules").symlink_to(package / "node_modules")
+        binary = bundle / "native/bin/linux-x64"
+        binary.mkdir(parents=True)
+        shutil.copy2(helper, binary / "opencode-sudo-tty")
+        (binary / "opencode-sudo-tty.sha256").write_text(hashlib.sha256(helper.read_bytes()).hexdigest())
     pid, terminal = pty.fork()
     if pid == 0:
+        if scenario == "loaded": os.environ["TEST_UI_WIDTH"] = sys.argv[2] if len(sys.argv) > 2 else "100"
         os.environ["OTUI_STDIN_LOG"] = str(temporary / "stdin.log")
         if scenario == "diagnostics":
             os.environ["OTUI_DEBUG"] = "1"
             os.environ["OTUI_NATIVE_INPUT_SHADOW"] = "1"
-        os.execv(shutil.which("bun"), ["bun", str(package / "test/fixture/native.ts"), directory, str(helper), scenario])
+        os.execv(shutil.which("bun"), ["bun", "--preload", "@opentui/solid/preload", str(package / ("test/fixture/loaded.ts" if scenario == "loaded" else "test/fixture/native.ts")), directory, str(helper), scenario])
     transcript = bytearray()
     phase = 0
     status = None
@@ -85,20 +101,18 @@ os.execv(args[0], args)
                 if not data: break
                 transcript.extend(data)
             if phase == 0 and b"FIXTURE_READY" in transcript:
-                os.write(terminal, b"r")
+                os.write(terminal, b"\r" if scenario == "loaded" else b"r")
                 phase = 1
             if phase == 1 and b"System sudo" in transcript:
                 native_group = os.tcgetpgrp(terminal)
                 assert native_group != pid, "native helper did not take foreground ownership"
                 if scenario == "suspend": os.killpg(native_group, signal.SIGTSTP)
                 phase = 2
-            if phase == 1 and b"Ctrl+C to close" in transcript:
-                native_group = os.tcgetpgrp(terminal)
-                phase = 2
-            if phase == 2 and scenario == "nopasswd" and b"System sudo" in transcript:
-                os.write(terminal, b"DUMMY_NATIVE_AUTH_PASSWORD\r")
-                phase = 3
             if phase == 2 and b"FAKE_AUTH_READY:" in transcript:
+                if scenario == "crash":
+                    os.killpg(native_group, signal.SIGKILL)
+                    phase = 4
+                    continue
                 if scenario == "long-auth":
                     (temporary / "clock").touch()
                     if not (temporary / "clock.observed").exists(): continue
@@ -125,23 +139,17 @@ os.execv(args[0], args)
             if scenario == "command-interrupt" and not command_interrupted and (temporary / "command-started").exists():
                 os.write(terminal, b"DUMMY_NATIVE_AUTH_TAIL\x03")
                 command_interrupted = True
-            if phase in (2, 3) and b"Ctrl+C to close" in transcript:
+            if phase < 4 and (temporary / "cleanup").exists():
                 assert b"APP_RESUMED" not in transcript
-                assert os.tcgetpgrp(terminal) == native_group
-                if scenario in ("interrupt", "command-interrupt"):
-                    time.sleep(0.05)
-                    assert not (temporary / "release.json").exists(), "authentication Ctrl+C dismissed the guard"
-                os.write(terminal, b"DUMMY_NATIVE_AUTH_TAIL")
-                if scenario == "crash":
-                    os.killpg(native_group, signal.SIGKILL)
-                else:
-                    if scenario == "suspend": os.killpg(native_group, signal.SIGTSTP)
-                    if scenario == "escape-tail":
-                        os.write(terminal, b"\x1b[A\x1b[200~DUMMY_NATIVE_AUTH_TAIL\x1b[201~")
-                        time.sleep(0.05)
-                        assert not (temporary / "release.json").exists(), "escape sequence released terminal"
-                    os.write(terminal, b"\x03")
+                assert not (temporary / "release.json").exists()
+                os.write(terminal, b"DUMMY_NATIVE_AUTH_TAIL\n\x1b[A\x1b[200~DUMMY_NATIVE_AUTH_TAIL\nsecond-line\x1b[201~")
+                if scenario == "loaded" and not (temporary / "closed-observed").exists(): continue
+                if scenario == "success": os.kill(native_group, signal.SIGTERM)
+                (temporary / "cleanup.release").touch()
                 phase = 4
+            if phase == 4 and b"APP_RESUMED" in transcript:
+                os.write(terminal, b"z")
+                phase = 5
             ended, code = os.waitpid(pid, os.WNOHANG)
             if ended:
                 status = code
@@ -149,29 +157,34 @@ os.execv(args[0], args)
         if status is None:
             ended, code = os.waitpid(pid, os.WNOHANG)
             if ended: status = code
-        assert phase == 4, transcript[-3000:].decode(errors="replace")
+        assert phase in (4, 5), transcript[-3000:].decode(errors="replace")
         assert (temporary / "release.json").exists(), transcript[-3000:].decode(errors="replace")
         released = json.loads((temporary / "release.json").read_text())["released"]
-        assert released == (scenario != "crash")
-        if released: assert os.tcgetpgrp(terminal) in (pid, 0)
+        assert released == (scenario not in ("crash", "attributes", "readback", "ownership", "foreground-readback"))
+        if released:
+            assert os.tcgetpgrp(terminal) in (pid, 0)
+            assert (temporary / "fresh-key").read_text() == "z"
         output = (temporary / "result.json").read_bytes()
         log = (temporary / "stdin.log").read_bytes()
-        assert b"r" in log, "raw-input logging was not exercised"
-        for secret in (b"DUMMY_NATIVE_AUTH_PASSWORD", b"DUMMY_NATIVE_AUTH_TAIL"):
+        assert (b"\r" if scenario == "loaded" else b"r") in log, "raw-input logging was not exercised"
+        for secret in (b"DUMMY_NATIVE_AUTH_PASSWORD", b"DUMMY_NATIVE_AUTH_TAIL", b"DUMMY_NATIVE_AUTH_BUFFER", b"second-line"):
             assert secret not in output, "secret leaked into tool result"
             assert secret not in log, "secret leaked into renderer input log"
-        assert b"DUMMY_NATIVE_AUTH_TAIL" not in transcript, "guard echoed trailing input"
+        if released: assert b"z" in log, "fresh input was not delivered after resume"
+        assert b"DUMMY_NATIVE_AUTH_TAIL" not in transcript, "cleanup echoed trailing input"
         result = json.loads(output)
-        if scenario in ("success", "nopasswd", "diagnostics", "suspend", "crash", "slow-auth", "long-auth", "replace", "unlink", "resize", "escape-tail", "retry"):
+        if scenario in ("success", "loaded", "nopasswd", "diagnostics", "suspend", "attributes", "readback", "ownership", "foreground-readback", "slow-auth", "long-auth", "replace", "unlink", "resize", "escape-tail", "retry"):
             assert result["output"] == "command-output\n", result
             assert result["exit"] == 0, result
             assert not result["timedOut"], result
+        if scenario == "command-failure":
+            assert result["exit"] == 7 and result["output"] == "", result
         if scenario == "failure":
             assert result["exit"] == 1 and result["output"] == "", result
         if scenario in ("timeout", "flood"):
             assert result["timedOut"] and result["exit"] != 0, result
         if scenario == "flood": assert result["truncated"], result
-        if scenario in ("cancel", "stale", "remote"): assert result is None, result
+        if scenario in ("cancel", "stale", "remote", "crash"): assert result is None, result
         if scenario in ("stale", "remote"): assert b"FAKE_AUTH_READY" not in transcript
         if scenario in ("interrupt", "command-interrupt", "handoff-cancel"): assert result["exit"] != 0 and result["output"] == "", result
         if scenario == "success":

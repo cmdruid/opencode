@@ -7,6 +7,7 @@ test
     "success",
     "nopasswd",
     "failure",
+    "command-failure",
     "retry",
     "cancel",
     "handoff-cancel",
@@ -16,6 +17,10 @@ test
     "flood",
     "suspend",
     "crash",
+    "attributes",
+    "readback",
+    "ownership",
+    "foreground-readback",
     "diagnostics",
     "slow-auth",
     "long-auth",
@@ -36,5 +41,9 @@ test
     new Response(child.stderr).text(),
   ])
   expect({ code, error }).toEqual({ code: 0, error: "" })
-  expect(JSON.parse(output)).toEqual({ scenario, released: scenario !== "crash", credential_leaks: false })
+  expect(JSON.parse(output)).toEqual({
+    scenario,
+    released: !["crash", "attributes", "readback", "ownership", "foreground-readback"].includes(scenario),
+    credential_leaks: false,
+  })
 })

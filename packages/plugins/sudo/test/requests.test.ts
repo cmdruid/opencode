@@ -9,6 +9,7 @@ const unixTest = test.skipIf(process.platform === "win32")
 const info = {
   id: crypto.randomUUID(),
   sessionID: "session",
+  reason: "Inspect the privileged service identity.",
   command: "id",
   cwd: "/tmp",
   host: "server",

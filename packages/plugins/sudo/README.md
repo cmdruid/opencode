@@ -20,23 +20,29 @@ For a source checkout only, maintainers run `bun run build` before loading its d
 
 ## Usage
 
-The agent calls the tool with `command`, optional `workdir`, and optional `timeout` in milliseconds. Omit a leading `sudo`:
+The agent calls the tool with `command`, a required `reason` (one nonblank sentence, up to 500 characters), optional `workdir`, and optional `timeout` in milliseconds. Omit a leading `sudo`:
 
 ```json
-{ "command": "id -u", "timeout": 120000 }
+{
+  "command": "systemctl reload example",
+  "reason": "Reload the system service to apply the requested configuration.",
+  "timeout": 120000
+}
 ```
 
 OpenCode checks the `sudo` permission action first. Then, in the requesting session:
 
-1. Review the server, directory, and command in OpenCode. PageUp/PageDown/Home/End scroll long commands. Invisible characters and backslashes are escaped. **Do not type a password in this dialog.** Enter approves; Escape cancels.
-2. System sudo prompts directly in a native panel over a frozen OpenCode view, without a second confirmation. Only type your password when sudo prompts. `sudo -k` requires fresh authentication unless sudoers specifies passwordless access.
-3. After completion, authentication failure, interruption, or cancellation, press **Ctrl+C** to return. Until then, native code discards input with echo disabled. Ctrl-Z is disabled during native ownership. If the helper crashes or cannot restore the terminal, OpenCode remains suspended; close that terminal and restart.
+1. Review the host, directory, reason, and highlighted command. Tab expands/collapses the view; PageUp/PageDown/Home/End scroll. Line numbers distinguish actual newlines from visual wraps. Invisible characters and backslashes are escaped. Enter approves; Escape cancels.
+2. System sudo prompts directly in a native panel over a fresh frozen OpenCode view. `sudo -k` requires fresh authentication unless sudoers specifies passwordless access.
+3. OpenCode returns automatically after sudo exits and native cleanup succeeds, including command errors and cancellation. Ctrl+C cancels an active invocation; Ctrl-Z is disabled during native ownership. If the helper crashes or cannot restore the terminal, OpenCode remains suspended; close that terminal and restart.
 
-The review is 60 columns wide (or fits the terminal), with a content-sized command area capped at six rows. Scroll hints appear only for overflowing commands. The native panel occupies the bottom eight rows on normal-sized terminals and uses the current theme's dialog colors. A bounded, sanitized snapshot preserves the upper part of OpenCode; unavailable snapshots use a branded native screen. The snapshot is ASCII-only, so non-ASCII background characters appear as spaces; command review in OpenCode retains Unicode with invisible controls escaped. Long sudo/PAM messages scroll below the heading. Resizing during authentication releases the panel's scroll region for ordinary terminal output, without reading or reconstructing the password prompt. Very small terminals use full-screen output. These are presentation fallbacks; input remains exclusively native.
+Short reviews remain compact; longer content uses the available height and shows a scroll position only when needed. The reason is the agent's explanation and is ordinary tool-call input, with no special reviewer integration. Highlighting does not change the command sent for execution or infer its effects.
+
+The native panel occupies the bottom eight rows on normal-sized terminals and uses the current theme's dialog colors. Each handoff waits for a fresh completed frame before suspension. Its bounded ASCII snapshot preserves the upper part of OpenCode; unavailable snapshots use a branded native screen. Long sudo/PAM messages scroll below the heading. Resizing during authentication releases the panel's scroll region without reading or reconstructing the password prompt. Very small terminals use full-screen output.
 
 There is no password RPC, password form, or password state in JavaScript. Authentication stdout/stderr stay on the terminal as well, since PAM messages can contain sensitive text. Commands run in `/bin/sh` with `/dev/null` stdin, a new session, and no controlling terminal. Only their stdout/stderr enter the tool result; output is limited to the last 65536 characters.
 
-The agent waits for your response: pending approval requests and native authentication have no plugin-imposed deadline. System sudo still enforces its own authentication policy. The command timeout defaults to two minutes and starts only after authentication succeeds. Explicit cancellation, plugin shutdown, or a native helper disconnect ends the pending request. Cancellation and command timeout terminate the command through sudo; neither rolls back completed operations. The native guard remains until dismissed even when the server has closed the request.
+The agent waits for your response: pending approval requests and native authentication have no plugin-imposed deadline. System sudo still enforces its own authentication policy. The command timeout defaults to two minutes and starts only after authentication succeeds. Explicit cancellation, plugin shutdown, or a native helper disconnect ends the pending request. Cancellation and command timeout terminate the command through sudo; neither rolls back completed operations. A server result cannot resume the terminal before native cleanup finishes.
 
 ## Security boundary
 
@@ -65,23 +71,15 @@ Tests exercise the real tool/RPC registry, loaded TUI plugin, approval scrolling
 
 The local Pi extension informed the dedicated-tool interaction. This implementation uses native sudo authentication instead of collecting a password in the harness.
 
-## UI implementation and spike results
+## Terminal return
 
-The approved flow is **OpenCode review → native sudo authentication → Ctrl+C to return**. Permission policy is unchanged. The user selected retaining OpenCode's review and removing the native duplicate, avoiding an automatic terminal takeover and retaining accessible long-command review. Ctrl+C avoids the Escape-prefix ambiguity of arrow keys. During authentication or execution it cancels; after sudo exits, a new Ctrl+C closes the native window. The final guard reads this key directly with terminal signal generation disabled, so an earlier cancellation signal cannot close it.
+The flow is **OpenCode review → native sudo authentication and execution → automatic return**. After reaping sudo, the helper restores presentation, discards unread terminal input while restoring attributes with `TCSAFLUSH`, reads back those attributes, and restores and verifies foreground ownership. Exit zero certifies terminal cleanup independently of the command's exit status. JavaScript discards any unread stream buffer before resuming the renderer; no password inspection or completion delay is involved.
 
-The screen-preservation spike uses the public renderer buffer API before suspension. A bounded one-way pipe sends sanitized display text and numeric semantic theme colors to native code; it closes before sudo is forked. It contains no command authority or authentication data. Only the private request socket supplies the command to execute. No terminal readback, password widget, JavaScript PTY relay, or authentication-output capture is involved.
+Requests wait behind other dialogs and suspended editor handoffs. Queued requests retain separate reviews. A server `closed` event may precede terminal restoration; the next review opens only after the helper finishes, the renderer resumes, and the previous dialog closes. Route changes and plugin disposal cancel active native work through the same cleanup path.
 
-The native panel uses a terminal scroll region, with direct sudo/PAM stdout and stderr. This region is presentation, not a security sandbox for trusted PAM output. No cursor queries are sent during authentication. Resize uses the terminal size ioctl and falls back to full-screen output. The final no-echo guard, input flush, foreground restoration, and normal-exit-only resume remain mandatory.
+Regression coverage includes injected terminal-restoration failures, a deterministic cleanup barrier with trailing dummy input and paste sequences, and a loaded-plugin PTY test with early server closure and queued approvals. Fresh-frame tests cover successive requests, an in-flight frame, and cancellation. Run `python3 test/fixture/overlay.py` for an isolated fake-sudo tmux demonstration at 40×16, 80×24, and 120×40.
 
-Requests wait behind other OpenCode dialogs and suspended editor handoffs. Only the requesting session opens its review. A route change, request closure, or dismissal aborts pending helper preflight before terminal acquisition; the broker cancels an already claimed request. Queued requests retain separate explicit reviews, and stale or competing claims cannot authenticate twice.
-
-Automated evidence:
-
-- Real-renderer/PTY tests exercise native ownership, direct authentication streams, dummy credential isolation, success/NOPASSWD/failure, cancellation, Ctrl-C/Ctrl-Z, timeouts, output flooding, stale/remote claims, delayed authentication, package replacement/unlink, resize, crash, and escape/paste tails. Authentication Ctrl+C must leave the guard open until another Ctrl+C; the removed native-decline scenario is covered by OpenCode review cancellation tests.
-- An isolated tmux demonstration at 40×16, 80×24, and 120×40 preserves the frozen conversation and heading through long authentication messages. Reproduce with `python3 test/fixture/overlay.py` when tmux is installed. It compiles fake sudo and uses dummy input only.
-- Loaded TUI tests cover queued reviews and deferral behind dialogs/editor suspension. Presentation tests cover light/dark colors, ASCII sanitization, and the monochrome/no-frame fallback. Packaging tests verify the actual bundled helper and entrypoints.
-
-Manual acceptance remains owner-driven: try harmless `id -u`, a wrong password, Ctrl-C, Ctrl+C return, and resize in the actual TUI, including an SSH session. Automated fixtures never execute real sudo. Run development clients with `bun run dev:live` so they do not replace the elected server.
+Manual acceptance with real sudo/PAM remains owner-driven before release. Development clients should use `bun run dev:live` so they do not replace the elected server.
 
 ## Releasing
 

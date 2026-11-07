@@ -24,6 +24,10 @@ npm publish ../../../dist/plugins/cmdcode-opencode-safe-sudo-0.1.0.tgz --dry-run
 
 `prepack` builds the native helper and compiles the Solid TUI to JavaScript. This makes installed packages independent of workspace JSX configuration. `OPENCODE_SUDO_TARBALL` makes the packaging test inspect the exact archive being released. Update the filename for later versions. Keep the archive produced by this process; publish that archive, not an extracted directory whose maintainer build scripts are intentionally excluded.
 
+Before activation, verify automatic return with fake sudo and run the isolated tmux fixture. Build the helper, checksum, and compiled TUI together; replace the complete artifact only while no sudo handoff is active. The tool now requires `reason`, for example `{ "command": "systemctl reload example", "reason": "Reload the system service to apply the requested configuration." }`.
+
+Artifact checks verify the shipped static binary and entrypoints. Behavioral tests compile the same native source with an unprivileged fake sudo; they never exercise real credentials or privileged commands.
+
 ## First publication: account setup
 
 An npm account authorized to publish packages in `@cmdcode` must perform the initial publication. The recommended route is an interactive login and 2FA in your own terminal:

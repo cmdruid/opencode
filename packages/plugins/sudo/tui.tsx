@@ -10,7 +10,7 @@ export default Plugin.define({
   setup(ctx) {
     const rpc = ctx.client.rpc(Sudo)
     const [pending, setPending] = createSignal<readonly Request[]>([])
-    const active = { id: "", close: () => {}, invalidate: () => {} }
+    const active = { id: "", close: () => {}, invalidate: () => {}, closed: () => {} }
     const revision = { value: 0 }
     const [available, setAvailable] = createSignal(ctx.renderer.controlState !== "explicit_suspended")
     const frame = () => setAvailable(ctx.renderer.controlState !== "explicit_suspended")
@@ -45,7 +45,7 @@ export default Plugin.define({
       rpc.events.on("closed", (event) => {
         revision.value++
         setPending((current) => current.filter((request) => request.id !== event.data.id))
-        if (active.id === event.data.id) active.invalidate()
+        if (active.id === event.data.id) active.closed()
       }),
     )
     onCleanup(ctx.data.on("server.connected", load))
@@ -72,7 +72,15 @@ export default Plugin.define({
       const handoff = new AbortController()
       const [closed, setClosed] = createSignal(false)
       const [error, setError] = createSignal("")
-      active.close = () => ctx.ui.dialog.clear()
+      active.close = () => {
+        handoff.abort()
+        if (!state.submitted) ctx.ui.dialog.clear()
+      }
+      active.closed = () => {
+        // The result can precede native terminal restoration. Its process exit
+        // remains the sole authority for resuming and closing this dialog.
+        if (!state.submitted) setClosed(true)
+      }
       active.invalidate = () => {
         handoff.abort()
         if (state.submitted) void rpc.cancel({ id: request.id }, options).catch(() => undefined)

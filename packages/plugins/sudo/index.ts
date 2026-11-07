@@ -23,6 +23,9 @@ export default Plugin.define({
         input: Schema.toStandardSchemaV1(
           Schema.Struct({
             command: Schema.String.check(Schema.isMinLength(1)),
+            reason: Schema.String.check(Schema.isMaxLength(500), Schema.isPattern(/\S/u)).annotate({
+              description: "One concise sentence explaining why this operation requires root privileges.",
+            }),
             workdir: Schema.optionalKey(Schema.String),
             timeout: Schema.optionalKey(
               Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(2147483647)),
@@ -61,6 +64,7 @@ export default Plugin.define({
             id: crypto.randomUUID(),
             sessionID: context.sessionID,
             command: input.command,
+            reason: input.reason,
             cwd,
             host: hostname(),
             user: userInfo().username,

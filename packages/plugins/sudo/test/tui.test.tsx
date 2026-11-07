@@ -6,10 +6,10 @@ test("installed TUI plugin requests terminal handoff, never a password response"
   await using app = await fixture({ shortcut: "p" })
   try {
     await app.ready
-    await app.waitForFrame((frame) => frame.includes("Run as root"))
+    await app.waitForFrame((frame) => frame.includes("sudo ·"))
     await app.mockInput.typeText("plain-input")
     await app.renderOnce()
-    expect(app.captureCharFrame()).toContain("Run as root")
+    expect(app.captureCharFrame()).toContain("sudo ·")
     expect(app.captureCharFrame()).not.toContain("plain-input")
     // The fixture has no real terminal; the production preflight must reject before suspending it.
     app.mockInput.pressEnter()
@@ -26,7 +26,7 @@ test.each(["cancel", "closed"])("queued approvals survive %s of the active promp
   await using app = await fixture()
   try {
     await app.ready
-    await app.waitForFrame((frame) => frame.includes("Run as root"))
+    await app.waitForFrame((frame) => frame.includes("sudo ·"))
     app.events.emit({
       id: "evt_sudo_second",
       created: 0,
@@ -71,10 +71,10 @@ test("pending sudo waits for another dialog to close", async () => {
       data: app.request,
     })
     await app.renderOnce()
-    expect(app.captureCharFrame()).not.toContain("Run as root")
+    expect(app.captureCharFrame()).not.toContain("sudo ·")
     expect(app.captureCharFrame()).toContain("Switch model")
     app.mockInput.pressEscape()
-    await app.waitForFrame((frame) => frame.includes("Run as root"))
+    await app.waitForFrame((frame) => frame.includes("sudo ·"))
   } finally {
     app.renderer.destroy()
     app.events.disconnect()
@@ -96,9 +96,26 @@ test("pending sudo waits for a suspended terminal to resume", async () => {
     })
     expect(app.renderer.controlState === "explicit_suspended").toBe(true)
     await app.renderer.resume()
-    await app.waitForFrame((frame) => frame.includes("Run as root"))
+    await app.waitForFrame((frame) => frame.includes("sudo ·"))
   } finally {
     app.renderer.destroy()
     app.events.disconnect()
   }
 })
+
+test.skipIf(process.platform !== "linux").each([40, 100])(
+  "loaded plugin waits for native cleanup before advancing the queue at %s columns",
+  async (width) => {
+    const child = Bun.spawn(["python3", `${import.meta.dir}/fixture/native.py`, "loaded", String(width)], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [code, output, error] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ])
+    expect({ code, error }).toEqual({ code: 0, error: "" })
+    expect(JSON.parse(output)).toEqual({ scenario: "loaded", released: true, credential_leaks: false })
+  },
+)
