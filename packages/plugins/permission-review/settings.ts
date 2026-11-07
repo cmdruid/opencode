@@ -7,6 +7,14 @@ const Saved = Schema.Struct({ version: Schema.Literal(1), values: Overrides })
 /** Resolve once per request; configuration remains the baseline beneath sparse server overrides. */
 export function resolveSettings(options: typeof Options.Type, overrides: Overrides = {}) {
   const values: ServerValues = {
+    reviewWith:
+      overrides.reviewWith ??
+      options.reviewWith ??
+      ((overrides.mode ?? options.mode ?? "chat") === "chat"
+        ? "reviewer"
+        : (overrides.fallback === undefined ? options.fallback : overrides.fallback)
+          ? "both"
+          : "classifier"),
     model: options.model,
     mode: options.mode ?? "chat",
     minConfidence: options.minConfidence ?? 0.98,
@@ -55,6 +63,12 @@ export function settings(ctx: Plugin.Context, options: typeof Options.Type) {
     const current = { ...(yield* overrides), ...input.patch }
     input.reset?.forEach((key) => delete current[key])
     const next = resolveSettings(options, current)
+    if (input.patch.reviewWith) {
+      if (next.values.reviewWith !== "reviewer" && next.values.mode !== "decision")
+        return yield* Effect.fail(new Error("Choose a classifier model first"))
+      if (next.values.reviewWith !== "classifier" && next.values.mode === "decision" && !next.values.fallback)
+        return yield* Effect.fail(new Error("Choose a reviewer model first"))
+    }
     // Only validate changed model choices: an unavailable existing provider must not block resetting another field.
     const refs = [
       ...(input.patch.model || input.patch.mode ? [{ model: next.values.model, type: next.values.mode }] : []),

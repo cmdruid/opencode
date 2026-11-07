@@ -67,3 +67,12 @@ test.each([
 ])("wire schema rejects out-of-bounds settings %j", (patch) => {
   expect(() => Schema.decodeUnknownSync(SaveSettings)({ patch })).toThrow()
 })
+
+test("review workflow defaults preserve legacy chat, classifier-only and combined configuration", () => {
+  expect(resolveSettings(options).values.reviewWith).toBe("reviewer")
+  expect(resolveSettings({ ...options, mode: "decision" }).values.reviewWith).toBe("classifier")
+  const combined = { ...options, mode: "decision" as const, fallback: { model: options.model } }
+  expect(resolveSettings(combined).values.reviewWith).toBe("both")
+  expect(resolveSettings(combined, { reviewWith: "reviewer" }).values.reviewWith).toBe("reviewer")
+  expect(resolveSettings(combined, { fallback: null }).values.reviewWith).toBe("classifier")
+})

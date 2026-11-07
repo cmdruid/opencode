@@ -88,6 +88,34 @@ it.live("fallback settings persist per session, default to shadow, and preserve 
     expect((yield* permission.ask(request)).effect).toBe("ask")
     expect(calls).toEqual(["classifier"])
     yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "auto" } })
+    yield* client.saveSettings({ patch: { reviewWith: "classifier" } })
+    calls.length = 0
+    expect((yield* permission.ask(request)).effect).toBe("ask")
+    expect(calls).toEqual(["classifier"])
+    expect((yield* client.session({ sessionID: session.id })).fallback).toBeUndefined()
+    yield* client.saveSettings({ patch: { reviewWith: "reviewer" } })
+    calls.length = 0
+    expect((yield* permission.ask(request)).effect).toBe("allow")
+    expect(calls).toEqual(["chat"])
+    expect((yield* client.session({ sessionID: session.id })).model.id).toBe(Model.ID.make("chat"))
+    expect(
+      (yield* client.history({ sessionID: session.id })).some(
+        (entry) => entry.mode === "chat" && entry.model.id === "chat",
+      ),
+    ).toBe(true)
+    yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "shadow" } })
+    calls.length = 0
+    expect((yield* permission.ask(request)).effect).toBe("ask")
+    expect(calls).toEqual(["chat"])
+    yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "off" } })
+    calls.length = 0
+    expect((yield* permission.ask(request)).effect).toBe("ask")
+    expect(calls).toEqual([])
+    yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "auto" } })
+    yield* client.saveSettings({ patch: { reviewWith: "both" } })
+    calls.length = 0
+    expect((yield* permission.ask(request)).effect).toBe("allow")
+    expect(calls).toEqual(["classifier", "chat"])
     yield* host.session.update({
       sessionID: session.id,
       permissions: [{ action: "shell", resource: "*", effect: "deny" }],

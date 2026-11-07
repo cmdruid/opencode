@@ -63,7 +63,7 @@ export default Plugin.define({
       return { preset: "configured" as const, mode: yield* mode(sessionID, values) }
     })
     const fallback = Effect.fn(function* (sessionID: AssertInput["sessionID"], values: typeof Options.Type) {
-      if (!values.fallback || values.mode !== "decision") return undefined
+      if (!values.fallback || values.mode !== "decision" || values.reviewWith === "classifier") return undefined
       const value = yield* ctx.storage.get(`fallback/${sessionID}`)
       return {
         model: yield* connection.model("fallback", values).pipe(Effect.orDie),
@@ -90,7 +90,10 @@ export default Plugin.define({
             ? ("session" as const)
             : configState.sources.defaultMode,
         fallbackSource: chatMode !== undefined ? ("session" as const) : configState.sources.fallback,
-        model: yield* connection.model("classifier", values).pipe(Effect.orDie),
+        model:
+          values.reviewWith === "reviewer" && chat
+            ? chat.model
+            : yield* connection.model("classifier", values).pipe(Effect.orDie),
         ...(values.actions ? { actions: values.actions } : {}),
         ...(chat ? { fallback: chat } : {}),
       }
@@ -231,13 +234,24 @@ export default Plugin.define({
           .filter((entry) => entry.action === event.request.action)
           .slice(0, 20)
         const chat = yield* fallback(event.request.sessionID, values)
-        const model = yield* connection.model("classifier", values).pipe(Effect.orDie)
-        const result = yield* review(ctx, event, { ...values, model, fallback: chat }, remembered).pipe(
+        const chatOnly = values.reviewWith === "reviewer" && values.mode === "decision"
+        if (chatOnly && (!chat || chat.mode === "off")) return
+        const model = chatOnly && chat ? chat.model : yield* connection.model("classifier", values).pipe(Effect.orDie)
+        const configuredModel = chatOnly && values.fallback ? values.fallback.model : values.model
+        const backend = chatOnly ? "chat" : values.mode
+        const shadow = selected === "shadow" || (chatOnly && chat?.mode === "shadow")
+        const reviewed = review(
+          ctx,
+          event,
+          { ...values, mode: backend, model, fallback: chatOnly ? undefined : chat },
+          remembered,
+        )
+        const result = yield* (chatOnly && chat ? reviewed.pipe(Effect.timeout(chat.timeoutMs)) : reviewed).pipe(
           Effect.catch((error) =>
             Effect.succeed({
               decision: "escalate" as const,
               reason: Option.isSome(Schema.decodeUnknownOption(MissingModel)(error))
-                ? `Classifier model ${values.model.providerID}/${values.model.id} is unavailable; check Model and Connection in permission settings.`
+                ? `${backend === "decision" ? "Classifier" : "Reviewer"} model ${configuredModel.providerID}/${configuredModel.id} is unavailable; check Model and Connection in permission settings.`
                 : "Permission reviewer unavailable; please review the request.",
             }),
           ),
@@ -249,8 +263,8 @@ export default Plugin.define({
           action: event.request.action,
           resources: event.request.resources,
           model: { providerID: model.providerID, id: model.id },
-          mode: values.mode ?? "chat",
-          shadow: selected === "shadow",
+          mode: backend ?? "chat",
+          shadow,
           at: completed,
           durationMs: completed - started,
           ...result,
@@ -258,16 +272,15 @@ export default Plugin.define({
         yield* Effect.logInfo("Automatic permission review", {
           requestID: event.request.id,
           decision: result.decision,
-          shadow: selected === "shadow",
+          shadow,
           reason: result.reason,
         })
-        event.result =
-          selected === "shadow"
-            ? {
-                decision: "escalate",
-                reason: `Shadow review suggests ${result.decision}: ${result.reason} Your decision is required.`,
-              }
-            : { decision: result.decision, reason: result.reason }
+        event.result = shadow
+          ? {
+              decision: "escalate",
+              reason: `Shadow review suggests ${result.decision}: ${result.reason} Your decision is required.`,
+            }
+          : { decision: result.decision, reason: result.reason }
       }),
     )
   }),

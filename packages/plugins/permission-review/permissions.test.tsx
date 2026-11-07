@@ -76,8 +76,8 @@ test.each([44, 112])(
     const lines = f.app.captureCharFrame().split("\n")
     const classifier = lines.findIndex((line) => line.includes("Classifier"))
     expect(lines[classifier + 1]).toContain("Reviewer")
-    expect(lines[classifier + 2]).toContain("This session")
-    expect(lines[classifier + 3]).toContain("Review policy")
+    expect(lines[classifier + 2]).toContain("Session Policy")
+    expect(lines[classifier + 3]).toContain("Global Policy")
     expect(lines[classifier + 4]).toContain("Activity")
     expect(lines[classifier + 6]).toContain("Fast decision model")
     expect(f.data.fixture.session).toBeUndefined()
@@ -101,7 +101,7 @@ test.each([44, 112])(
 test("editor preserves a failed draft, saves to its parent, and cancels without writes", async () => {
   await using f = await fixture()
   await f.open("Settings")
-  await f.open("Review policy")
+  await f.open("Global Policy")
   await f.open("Additional instructions")
   await f.app.mockInput.typeText("Only the requested effects")
   f.data.fixture.failure = "Fixture save failed"
@@ -111,14 +111,16 @@ test("editor preserves a failed draft, saves to its parent, and cancels without 
   expect(f.data.fixture.writes).toEqual([])
   f.data.fixture.failure = ""
   await f.submit()
-  expect(f.app.captureCharFrame()).toContain("Review policy")
+  expect(f.app.captureCharFrame()).toContain("Global Policy")
   expect(f.data.fixture.writes).toEqual([{ patch: { policy: "Only the requested effects" } }])
   await f.open("Additional instructions")
   await f.app.mockInput.typeText("Discard me")
   await f.back()
   expect(f.data.fixture.writes).toHaveLength(1)
-  await f.open("Use configured values")
-  expect(f.data.fixture.writes[1]).toEqual({ patch: {}, reset: ["defaultMode", "actions", "policy"] })
+  f.app.mockInput.pressKey("r", { ctrl: true })
+  await f.ready()
+  await f.open("Reset to Defaults")
+  expect(f.data.fixture.writes[1]).toEqual({ patch: {}, reset: ["reviewWith", "defaultMode", "actions", "policy"] })
 })
 
 test("classifier selection only offers decision models; reviewer selection offers chat and variants", async () => {
@@ -195,7 +197,7 @@ test("numeric and policy controls bind to their server fields, including all ver
   await f.open("Remove reviewer")
   expect(f.data.fixture.writes.at(-1)?.patch.fallback).toBeNull()
   await f.back()
-  await f.open("Review policy")
+  await f.open("Global Policy")
   await f.open("Default automation")
   await f.open("Manual")
   expect(f.data.fixture.writes.at(-1)?.patch.defaultMode).toBe("manual")
@@ -284,7 +286,7 @@ test("mouse opens rows; long model lists scroll and return through providers", a
     })),
   ]
   await f.open("Classifier")
-  await f.open("Model")
+  await f.open("Provider")
   await f.open("fixture")
   f.app.mockInput.pressKey("END")
   await f.ready()
@@ -293,4 +295,64 @@ test("mouse opens rows; long model lists scroll and return through providers", a
   await f.ready()
   expect(f.app.captureCharFrame()).toContain("Confidence")
   expect(f.data.fixture.writes.at(-1)?.patch).toMatchObject({ mode: "decision", model: { id: "classifier-19" } })
+})
+
+test.each([44, 112])(
+  "reset hotkey confirms its scope, cancels safely, and leaves other sections intact at %s columns",
+  async (width) => {
+    await using f = await fixture(width)
+    f.data.fixture.overrides = { minConfidence: 0.8, policy: "Keep this policy" }
+    await f.refresh()
+    await f.open("Settings")
+    expect(f.app.captureCharFrame()).toContain("ctrl+r Reset to Defaults")
+    await f.open("Classifier")
+    expect(f.app.captureCharFrame()).not.toContain("Use configured")
+    f.app.mockInput.pressKey("r", { ctrl: true })
+    await f.ready()
+    expect(f.app.captureCharFrame()).toContain("Reset to Defaults?")
+    expect(f.app.captureCharFrame()).toContain("configuration")
+    await f.back()
+    expect(f.data.fixture.writes).toEqual([])
+    f.app.mockInput.pressKey("r", { ctrl: true })
+    await f.ready()
+    await f.open("Reset to Defaults")
+    expect(f.data.snapshot().values.minConfidence).toBe(0.9)
+    expect(f.data.snapshot().values.policy).toBe("Keep this policy")
+    expect(f.app.captureCharFrame()).toContain("Confidence")
+    await f.back()
+    f.app.mockInput.pressKey("r", { ctrl: true })
+    await f.ready()
+    await f.open("Global Policy")
+    await f.open("Reset to Defaults")
+    expect(f.data.snapshot().values.policy).toBe("")
+  },
+)
+
+test("Model stays within the selected provider; cancelling a Provider change writes nothing", async () => {
+  await using f = await fixture()
+  f.data.actions.models = async () => [
+    { providerID: "fixture", id: "classifier", type: "decision", variants: [] },
+    { providerID: "other", id: "other-classifier", type: "decision", variants: [] },
+    { providerID: "fixture", id: "chat", type: "chat", variants: [] },
+    { providerID: "other", id: "other-chat", type: "chat", variants: [] },
+  ]
+  await f.open("Settings")
+  for (const section of ["Classifier", "Reviewer"]) {
+    await f.open(section)
+    await f.open("Model")
+    expect(f.app.captureCharFrame()).toContain("Choose model")
+    expect(f.app.captureCharFrame()).not.toContain("other-")
+    await f.back()
+    await f.open("Provider")
+    await f.open("other")
+    expect(f.app.captureCharFrame()).toContain("other-")
+    await f.back()
+    await f.back()
+    expect(f.data.fixture.writes).toEqual([])
+    await f.back()
+  }
+  await f.open("Global Policy")
+  await f.open("Review With")
+  await f.open("Reviewer")
+  expect(f.data.snapshot().values.reviewWith).toBe("reviewer")
 })

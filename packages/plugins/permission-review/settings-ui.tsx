@@ -17,6 +17,7 @@ import type {
 } from "./contract.js"
 
 export const reviewLabels = { manual: "Manual", shadow: "Shadow", auto: "Approve for me" }
+export const reviewWithLabels = { classifier: "Classifier", reviewer: "Reviewer", both: "Classifier + Reviewer" }
 export const fallbackLabels = { off: "Off", shadow: "Shadow", auto: "Automatic" }
 export const presets = {
   "read-only": { title: "Read only", description: "Read files; ask for edits and shell" },
@@ -89,6 +90,7 @@ export function PermissionSettings(props: {
     mode: "modal",
     priority: 1,
     commands: [
+      { bind: "ctrl+r", title: "Reset to Defaults", run: () => resetDefaults() },
       {
         bind: "escape",
         title: "Back",
@@ -143,20 +145,90 @@ export function PermissionSettings(props: {
         },
       })),
     )
-  const reset = (keys: SaveSettings["reset"]): Row => ({
-    title: "Use configured values",
-    run: () => save({ patch: {}, reset: keys }),
-  })
+  const resetScope = () => {
+    if (page()?.type !== "menu" || page()?.title === "Reset to Defaults?" || page()?.title === "Reset to Defaults")
+      return
+    if (page()?.title === "Permission settings") return "Permission settings"
+    return pages().findLast((item) =>
+      [
+        "Classifier connection",
+        "Reviewer connection",
+        "Classifier",
+        "Reviewer",
+        "Session Policy",
+        "Global Policy",
+      ].includes(item.title),
+    )?.title
+  }
+  const resetDefaults = (section?: string): void => {
+    const scope = section ?? resetScope()
+    if (!scope || (busy() && !section)) return
+    if (scope === "Permission settings")
+      return menu("Reset to Defaults", "Choose which settings to restore", () =>
+        ["Classifier", "Reviewer", "Global Policy", ...(session() ? ["Session Policy"] : [])].map((title) => ({
+          title,
+          run: () => resetDefaults(title),
+        })),
+      )
+    const depth = pages().length
+    menu("Reset to Defaults?", `${scope}: configuration or built-in defaults`, () => [
+      {
+        title: "Cancel",
+        detail: `${scope}: configuration or built-in defaults`,
+        run: back,
+      },
+      {
+        title: "Reset to Defaults",
+        detail:
+          scope === "Session Policy"
+            ? "Remove session overrides; inherit parent and global policy"
+            : `Restore ${scope} from configuration or built-in defaults`,
+        run: async () => {
+          if (scope === "Session Policy") {
+            await change({ type: "reset", target: "selection" })
+            await change({ type: "reset", target: "fallback" })
+          } else if (scope.endsWith("connection")) {
+            await save({
+              patch: {},
+              connection: { role: scope === "Classifier connection" ? "classifier" : reviewerRole() },
+            })
+          } else {
+            await save({
+              patch: {},
+              reset:
+                scope === "Classifier"
+                  ? ["model", "mode", "minConfidence"]
+                  : scope === "Reviewer"
+                    ? values().mode === "chat"
+                      ? ["model", "mode", "fallback"]
+                      : ["fallback"]
+                    : ["reviewWith", "defaultMode", "actions", "policy"],
+            })
+          }
+          setPages((items) => {
+            const parent = items.findLastIndex((item) => item.title === scope)
+            return items.slice(0, parent < 0 ? depth : parent + (scope.endsWith("connection") ? 0 : 1))
+          })
+        },
+      },
+    ])
+  }
+  const reviewerModel = () => (values().mode === "chat" ? values().model : values().fallback?.model)
+  const reviewerRole = (): ConnectionRole => (values().mode === "chat" ? "classifier" : "fallback")
   const fallback = (input: Partial<NonNullable<Overrides["fallback"]>>) => {
     const current = values().fallback
     if (!current) throw new Error("Choose a reviewer model first")
     return patch({ fallback: { ...current, ...input } })
   }
-  const pickModel = async (role: ConnectionRole) => {
+  const pickModel = async (role: ConnectionRole, provider = false) => {
     const models = (await props.actions.models()).filter(
       (item) => (item.type ?? "chat") === (role === "classifier" ? "decision" : "chat"),
     )
     const providers = [...new Set(models.map((model) => model.providerID))]
+    const current =
+      role === "classifier" ? (values().mode === "decision" ? values().model : undefined) : reviewerModel()
+    const chooseProvider = provider || !current
+    const depth = pages().length
     const list = (providerID?: string) =>
       menu("Choose model", role === "classifier" ? "Classifier models" : "Chat models", () =>
         models
@@ -170,10 +242,11 @@ export function PermissionSettings(props: {
                 await patch(
                   role === "classifier"
                     ? { mode: "decision", model: ref }
-                    : { fallback: { mode: "shadow", timeoutMs: 10_000, ...values().fallback, model: ref } },
+                    : values().mode === "chat"
+                      ? { model: ref }
+                      : { fallback: { mode: "shadow", timeoutMs: 10_000, ...values().fallback, model: ref } },
                 )
-                back()
-                if (providers.length > 1) back()
+                setPages((items) => items.slice(0, depth))
               }
               if (!model.variants.length) return select()
               menu("Choose variant", model.id, () => [
@@ -181,99 +254,95 @@ export function PermissionSettings(props: {
                   title: "Default",
                   run: async () => {
                     await select()
-                    back()
                   },
                 },
                 ...model.variants.map((variant) => ({
                   title: variant.id,
                   run: async () => {
                     await select(variant.id)
-                    back()
                   },
                 })),
               ])
             },
           })),
       )
-    if (providers.length <= 1) return list()
+    if (!chooseProvider) return list(current!.providerID)
     menu("Choose provider", role === "classifier" ? "Classifier" : "Reviewer", () =>
       providers.map((providerID) => ({ title: providerID, run: () => list(providerID) })),
     )
   }
-  const connection = (role: ConnectionRole) => {
+  const connection = (
+    role: ConnectionRole,
+    title = role === "classifier" ? "Classifier connection" : "Reviewer connection",
+  ) => {
     const saved = server()!.connections.find((item) => item.role === role)
     if (!saved) throw new Error("Choose a reviewer model first")
     const draft = { url: saved.url ?? "", auth: saved.custom && saved.authenticated ? "keep" : "none", key: "" }
-    menu(
-      role === "classifier" ? "Classifier connection" : "Reviewer connection",
-      "Draft · all sessions on this server",
-      () => [
-        {
-          title: "Base URL",
-          value: draft.url || "Not set",
-          run: () =>
-            edit("Base URL", draft.url, (text) => {
-              draft.url = text
-              back()
-            }),
-        },
-        {
-          title: "Authentication",
-          value: draft.auth === "key" ? "New API key" : draft.auth === "keep" ? "Keep saved API key" : "No API key",
-          run: () =>
-            choose(
-              "Authentication",
-              "Draft",
-              [...(saved.custom && saved.authenticated ? ["keep"] : []), "none", "key"],
-              (item) => (item === "keep" ? "Keep saved API key" : item === "none" ? "No API key" : "Set API key"),
-              async (item) => {
-                draft.auth = item
-              },
-            ),
-        },
-        ...(draft.auth === "key"
-          ? [
-              {
-                title: "API key",
-                value: draft.key ? "New key entered" : "Not set",
-                run: () =>
-                  edit("API key", "", (text) => {
-                    draft.key = text
-                    back()
-                  }),
-              },
-            ]
-          : []),
-        {
-          title: "Save connection",
-          run: async () => {
-            if (draft.auth === "key" && !draft.key.trim()) throw new Error("Enter an API key or choose No API key")
-            if (draft.auth === "keep" && draft.url.trim().replace(/\/+$/, "") !== saved.url)
-              throw new Error("Endpoint changed: choose No API key or enter a new key")
-            await save({
-              patch: {},
-              connection: {
-                role,
-                url: draft.url,
-                ...(draft.auth === "keep" ? {} : { apiKey: draft.auth === "key" ? draft.key : "" }),
-              },
-            })
+    menu(title, "Draft · all sessions on this server", () => [
+      {
+        title: "Base URL",
+        value: draft.url || "Not set",
+        run: () =>
+          edit("Base URL", draft.url, (text) => {
+            draft.url = text
             back()
-          },
+          }),
+      },
+      {
+        title: "Authentication",
+        value: draft.auth === "key" ? "New API key" : draft.auth === "keep" ? "Keep saved API key" : "No API key",
+        run: () =>
+          choose(
+            "Authentication",
+            "Draft",
+            [...(saved.custom && saved.authenticated ? ["keep"] : []), "none", "key"],
+            (item) => (item === "keep" ? "Keep saved API key" : item === "none" ? "No API key" : "Set API key"),
+            async (item) => {
+              draft.auth = item
+            },
+          ),
+      },
+      ...(draft.auth === "key"
+        ? [
+            {
+              title: "API key",
+              value: draft.key ? "New key entered" : "Not set",
+              run: () =>
+                edit("API key", "", (text) => {
+                  draft.key = text
+                  back()
+                }),
+            },
+          ]
+        : []),
+      {
+        title: "Save connection",
+        run: async () => {
+          if (draft.auth === "key" && !draft.key.trim()) throw new Error("Enter an API key or choose No API key")
+          if (draft.auth === "keep" && draft.url.trim().replace(/\/+$/, "") !== saved.url)
+            throw new Error("Endpoint changed: choose No API key or enter a new key")
+          await save({
+            patch: {},
+            connection: {
+              role,
+              url: draft.url,
+              ...(draft.auth === "keep" ? {} : { apiKey: draft.auth === "key" ? draft.key : "" }),
+            },
+          })
+          back()
         },
-        {
-          title: "Use configured provider",
-          run: async () => {
-            await save({ patch: {}, connection: { role } })
-            back()
-          },
-        },
-        { title: "Cancel", run: back },
-      ],
-    )
+      },
+      { title: "Cancel", run: back },
+    ])
   }
   const classifier = () =>
     menu("Classifier", "Fast decision model · all sessions", () => [
+      {
+        title: "Provider",
+        value: values().mode === "decision" ? values().model.providerID : "Not configured",
+        detail: `${modelName(values().model)} · ${server()?.sources.model}`,
+        run: () => pickModel("classifier", true),
+      },
       {
         title: "Model",
         value: values().mode === "decision" ? values().model.id : "Choose classifier",
@@ -288,34 +357,42 @@ export function PermissionSettings(props: {
       {
         title: "Confidence",
         value: String(values().minConfidence),
-        detail: `${source("minConfidence")} · below this threshold, consult the reviewer`,
+        detail: `${source("minConfidence")} · minimum confidence for classifier approval`,
         run: () =>
           edit("Confidence (0–1)", String(values().minConfidence), async (text) => {
             await patch({ minConfidence: number(text) })
             back()
           }),
       },
-      reset(["model", "mode", "minConfidence"]),
     ])
   const reviewer = () =>
-    menu("Reviewer", "Chat model · consulted when the classifier needs review", () => [
+    menu("Reviewer", "Chat model · all sessions", () => [
+      {
+        title: "Provider",
+        value: reviewerModel()?.providerID ?? "Not configured",
+        run: () => pickModel("fallback", true),
+      },
       {
         title: "Model",
-        value: values().fallback?.model.id ?? "Not configured",
-        detail: values().fallback
-          ? `${modelName(values().fallback!.model)} · ${server()?.sources.fallback}`
+        value: reviewerModel()?.id ?? "Not configured",
+        detail: reviewerModel()
+          ? `${modelName(reviewerModel()!)} · ${server()?.sources.fallback}`
           : "Choose a chat model",
         run: () => pickModel("fallback"),
       },
-      ...(values().fallback
+      ...(reviewerModel()
         ? [
             {
               title: "Connection",
-              value: server()!.connections.find((item) => item.role === "fallback")?.custom
+              value: server()!.connections.find((item) => item.role === reviewerRole())?.custom
                 ? "Custom"
                 : "Provider default",
-              run: () => connection("fallback"),
+              run: () => connection(reviewerRole(), "Reviewer connection"),
             },
+          ]
+        : []),
+      ...(values().mode === "decision" && values().fallback
+        ? [
             {
               title: "Default mode",
               value: fallbackLabels[values().fallback!.mode],
@@ -340,7 +417,6 @@ export function PermissionSettings(props: {
             { title: "Remove reviewer", run: () => patch({ fallback: null }) },
           ]
         : []),
-      reset(["fallback"]),
     ])
   const actionCatalog = () => {
     const selected = new Set(
@@ -366,7 +442,20 @@ export function PermissionSettings(props: {
     ])
   }
   const policy = () =>
-    menu("Review policy", "All sessions on this server", () => [
+    menu("Global Policy", "All sessions on this server", () => [
+      {
+        title: "Review With",
+        value: reviewWithLabels[values().reviewWith],
+        detail: "Use either model, or consult the reviewer for uncertain classifier results",
+        run: () =>
+          choose(
+            "Review With",
+            "All sessions on this server",
+            ["classifier", "reviewer", "both"] as const,
+            (item) => reviewWithLabels[item],
+            (reviewWith) => patch({ reviewWith }),
+          ),
+      },
       {
         title: "Default automation",
         value: reviewLabels[values().defaultMode],
@@ -416,13 +505,6 @@ export function PermissionSettings(props: {
                   },
                 ),
             },
-            {
-              title: "Use configured actions",
-              run: async () => {
-                await save({ patch: {}, reset: ["actions"] })
-                back()
-              },
-            },
           ]),
       },
       {
@@ -436,11 +518,10 @@ export function PermissionSettings(props: {
           }),
       },
       { title: "Clear additional instructions", run: () => patch({ policy: "" }) },
-      reset(["defaultMode", "actions", "policy"]),
     ])
   const sessionMenu = () =>
     menu(
-      "This session",
+      "Session Policy",
       () => (session() ? "Current session" : "No session selected; choose a preset to create one"),
       () =>
         session()
@@ -475,11 +556,6 @@ export function PermissionSettings(props: {
                     },
                   ]
                 : []),
-              {
-                title: "Reset permissions",
-                run: () => change({ type: "reset", target: "selection" }),
-              },
-              { title: "Reset reviewer mode", run: () => change({ type: "reset", target: "fallback" }) },
             ]
           : [],
     )
@@ -554,18 +630,18 @@ export function PermissionSettings(props: {
       },
       {
         title: "Reviewer",
-        value: values().fallback?.model.id ?? "Not configured",
-        detail: "Chat model for uncertain classifier results",
+        value: reviewerModel()?.id ?? "Not configured",
+        detail: "Chat model for independent or combined review",
         run: reviewer,
       },
       {
-        title: "This session",
+        title: "Session Policy",
         value: session() ? reviewLabels[session()!.mode] : "No session",
         detail: "Session permissions and automation",
         run: sessionMenu,
       },
       {
-        title: "Review policy",
+        title: "Global Policy",
         value: reviewLabels[values().defaultMode],
         detail: "Defaults, reviewed actions and instructions",
         run: policy,
@@ -697,6 +773,12 @@ export function PermissionSettings(props: {
                 })
               }}
               onKeyDown={(event) => {
+                if (event.ctrl && event.name === "r" && event.eventType !== "release") {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  resetDefaults()
+                  return
+                }
                 if (
                   event.eventType === "release" ||
                   !["escape", "up", "down", "return", "pageup", "pagedown", "home", "end"].includes(event.name)
@@ -795,6 +877,11 @@ export function PermissionSettings(props: {
             </box>
           )
         }
+      </Show>
+      <Show when={resetScope()}>
+        <box paddingLeft={3} paddingRight={3} marginTop={1}>
+          <text fg={theme.text.muted}>ctrl+r Reset to Defaults</text>
+        </box>
       </Show>
       <Show when={error()}>
         <box paddingLeft={3} paddingRight={3} marginTop={1}>

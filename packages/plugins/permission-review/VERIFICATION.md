@@ -117,3 +117,22 @@ Plugin artifact SHA256: `305f0d6b3dfdaa906385a1223d196db77239f2ca17333a240c5d277
 Host: `packages/cli/dist/perm-fixes/cli-linux-x64/bin/opencode`, version `2.2.5-cmdruid.permfix.20261106`, including web UI; SHA256 `d73836575253380c551872d2c1d3c270a24ef92dea09f179ad2fa82a4213cfb9`.
 
 Alpha.2 is installed on the live server. Verified the previously missing custom classifier is now available, the full effective settings and ten session permission selections are preserved, and the same five pending requests remain intact. Backup: `~/.opencode/backups/before-auto-permissions-2026-11-06T23-41-06-079Z`. The host update is prepared but not activated because one session is running with those pending approvals; activation requires a server reload. No npm publication.
+
+## Policy, model selection and reset shortcut — 2026-11-06
+
+Version `0.1.0-alpha.3` uses Session Policy and Global Policy, separate Provider and Model controls, and a footer Ctrl+R shortcut instead of repeated reset rows. Reset confirmation names the section and restores configuration/built-in defaults; Escape cancels. From the settings overview the shortcut offers section selection. A provider change commits only after choosing its model/variant; Model directly lists the current provider's models.
+
+Global Policy's Review With selects classifier-only, reviewer-only or combined review. Omitted selection preserves the prior configuration's workflow. Reviewer-only bypasses classifier resolution and generation, retains reviewer Off/Shadow/Automatic and timeout, and records chat assessments. Classifier-only skips chat. Existing combined agreement rules, manual/Shadow policy and configured denials remain intact.
+
+Validation:
+
+- Full plugin suite: 43 pass, 304 assertions. Initial sandboxed execution could not bind the fixture server; the permitted isolated-fixture run passed.
+- Six affected Core plugin suites: 35 pass, 396 assertions. The first run caught an internal provider alias leaking into missing-model diagnostics; corrected to retain the configured model name.
+- UI/settings suites repeated ten times: 220 pass, 1,230 assertions. Core workflow/settings repeated ten times: 40 pass, 520 assertions. Added missing-model-choice validation assertions: settings suite ten repeats, 30 pass, 280 assertions.
+- Official plugin/Core TypeScript checks pass. Root `bun run check`: 36/36 tasks pass.
+- Production story inspected at 44×36 and 112×36 through `dev:live`: `/tmp/perm-compact-preview-keWYB5`. Shortened the reset explanation after inspecting its narrow layout.
+- Exact package passed isolated activation, settings persistence through restart, saved custom connection, queued Allow Session and packaged companion checks against installed host `2.2.5-cmdruid.permfix.20261106`: `/tmp/permission-package-check-G6uCIY/verification.json`.
+- Installed client inspection at both widths includes opening and cancelling the reset confirmation: `/tmp/perm-compact-preview-M5ID5Q`. No live review or approval was generated.
+
+Artifact SHA256: `6bf543958adb4328a068fde874694239b214ace1c2a18f2d0c6e23139b18ddd6`.
+Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.3/node_modules/@cmdcode/opencode-auto-permissions`. Backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T00-15-54-219Z`. Full existing effective settings (plus the new derived workflow field), all ten session selections and the server endpoint were verified unchanged. No host replacement/restart, remote push or npm publication.

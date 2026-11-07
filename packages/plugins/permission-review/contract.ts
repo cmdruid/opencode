@@ -8,6 +8,8 @@ export type ReviewMode = typeof ReviewMode.Type
 export const FallbackMode = Schema.Literals(["off", "shadow", "auto"])
 export type FallbackMode = typeof FallbackMode.Type
 
+export const ReviewWith = Schema.Literals(["classifier", "reviewer", "both"])
+
 export const ConnectionRole = Schema.Literals(["classifier", "fallback"])
 export type ConnectionRole = typeof ConnectionRole.Type
 
@@ -33,6 +35,7 @@ export const FallbackSettings = Schema.Struct({ model: Model.Ref, mode: Fallback
 export type FallbackSettings = typeof FallbackSettings.Type
 
 export const Options = Schema.Struct({
+  reviewWith: ReviewWith.pipe(Schema.optional),
   model: Model.Ref,
   mode: Schema.Literals(["chat", "decision"]).pipe(Schema.optional),
   policy: Schema.String.pipe(Schema.optional),
@@ -48,6 +51,7 @@ export const Options = Schema.Struct({
 })
 
 export const SettingKey = Schema.Literals([
+  "reviewWith",
   "model",
   "mode",
   "minConfidence",
@@ -60,6 +64,7 @@ export type SettingKey = typeof SettingKey.Type
 export const settingKeys = SettingKey.literals
 export const ValueSource = Schema.Literals(["default", "configuration", "server"])
 export const ServerValues = Schema.Struct({
+  reviewWith: ReviewWith,
   model: Model.Ref,
   mode: Schema.Literals(["chat", "decision"]),
   minConfidence: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
@@ -76,6 +81,7 @@ export const ServerValues = Schema.Struct({
 })
 export type ServerValues = typeof ServerValues.Type
 export const Overrides = Schema.Struct({
+  reviewWith: ReviewWith.pipe(Schema.optional),
   model: ServerValues.fields.model.pipe(Schema.optional),
   mode: ServerValues.fields.mode.pipe(Schema.optional),
   minConfidence: ServerValues.fields.minConfidence.pipe(Schema.optional),
