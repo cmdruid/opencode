@@ -116,6 +116,26 @@ it.live("fallback settings persist per session, default to shadow, and preserve 
     calls.length = 0
     expect((yield* permission.ask(request)).effect).toBe("allow")
     expect(calls).toEqual(["classifier", "chat"])
+    yield* client.setSession({ sessionID: session.id, change: { type: "automation", mode: "reviewer" } })
+    expect((yield* client.session({ sessionID: session.id })).reviewWithSource).toBe("session")
+    expect((yield* client.session({ sessionID: child.id })).reviewWith).toBe("both")
+    expect((yield* client.settings({})).values.reviewWith).toBe("both")
+    yield* client.setSession({ sessionID: session.id, change: { type: "reviewer", mode: "manual" } })
+    calls.length = 0
+    expect((yield* permission.ask(request)).effect).toBe("allow")
+    expect(calls).toEqual(["chat"])
+    yield* client.setSession({ sessionID: session.id, change: { type: "reset", target: "fallback" } })
+    yield* client.saveSettings({ patch: { reviewerMode: "auto" } })
+    expect((yield* client.session({ sessionID: session.id })).reviewerMode).toBe("auto")
+    yield* client.setSession({ sessionID: session.id, change: { type: "fallback", mode: "off" } })
+    calls.length = 0
+    expect((yield* permission.ask(request)).effect).toBe("ask")
+    expect(calls).toEqual([])
+    yield* client.setSession({ sessionID: session.id, change: { type: "reset", target: "automation" } })
+    expect((yield* client.session({ sessionID: session.id })).reviewWith).toBe("both")
+    expect((yield* client.session({ sessionID: session.id })).reviewWithSource).toBe("server")
+    yield* client.setSession({ sessionID: session.id, change: { type: "reviewer", mode: "auto" } })
+    yield* client.setSession({ sessionID: session.id, change: { type: "reset", target: "fallback" } })
     yield* host.session.update({
       sessionID: session.id,
       permissions: [{ action: "shell", resource: "*", effect: "deny" }],

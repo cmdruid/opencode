@@ -37,28 +37,29 @@ Open `/permissions` or **Permissions** in the command palette:
 | ---------------- | ------------------------------------------------------------------------------- | -------- |
 | Read only        | Ask for edits, shell, network and other tools                                   | Human    |
 | Ask for approval | Allow ordinary local edits; ask for shell, network and outside-directory access | Human    |
-| Approve for me   | Same scope as Ask for approval                                                  | Model    |
+| Approve          | Same scope as Ask for approval                                                  | Model    |
 | Full access      | No additional plugin restrictions; configured asks and denials remain           | Human    |
 
 Full access requires confirmation with **Go back** selected initially. Scope and reviewer are independent; changing the reviewer preserves scope. Custom combinations show their actual values without falsely marking a quick preset active.
 
-**Settings** has five sections:
+**Settings** has six sections:
 
-| Section        | Configuration                                                            | Scope                       |
-| -------------- | ------------------------------------------------------------------------ | --------------------------- |
-| Classifier     | Provider, decision model/variant, connection, confidence threshold       | All sessions on this server |
-| Reviewer       | Provider, chat model/variant, connection, default mode, timeout, removal | All sessions on this server |
-| Session Policy | Automation, reviewer mode, restore inherited/default choices             | Current session             |
-| Global Policy  | Review With, default automation, reviewed actions, instructions          | All sessions on this server |
-| Activity       | Review history, remembered approvals, effective permissions              | Current session             |
+| Section        | Configuration                                                      | Scope                       |
+| -------------- | ------------------------------------------------------------------ | --------------------------- |
+| Classifier     | Provider, decision model/variant, connection, confidence threshold | All sessions on this server |
+| Reviewer       | Provider, chat model/variant, connection, timeout, removal         | All sessions on this server |
+| Session Policy | Automation Mode, Classifier Mode, Reviewer Mode                    | Current session             |
+| Global Policy  | Automation Mode, Classifier Mode, Reviewer Mode                    | All sessions on this server |
+| Review Rules   | Exact reviewed actions and additional instructions                 | All sessions on this server |
+| Activity       | Review history, remembered approvals, effective permissions        | Current session             |
 
 Menus use compact native OpenCode selection rows, right-aligned values and help for the selected row. There is no search/filter input. Arrows select, Enter opens, and PgUp/PgDn scroll. Home/End select the first/last row. Escape returns one level, preserving the parent selection and scroll position; at the permissions selector it closes. Editors use Ctrl+S to save and Escape to discard. Errors preserve the draft. Connections use one draft and an explicit **Save connection** action. History details return to history, and approval details/revocation return to the approvals list.
 
 Opening settings on the home screen creates no session. Session/activity sections explain their empty state. Selecting a quick preset creates a session only when needed; it runs no model or tool.
 
-Effective server values resolve from built-in defaults, configuration-file options, then sparse saved overrides. Selected-row help identifies the source of saved model, threshold and policy values. **Ctrl+R — Reset to Defaults** opens a confirmation for the current section and removes its saved overrides, restoring configuration-file values or built-in defaults. From the settings overview, the shortcut first asks which section to reset. Model sections reset model choices and tuning; connection overrides reset within their Connection screen. Escape cancels without changing settings. Text editors keep their normal editing keys. Clearing instructions saves empty text; clearing instructions saves empty text, removing the reviewer saves disabled state, **All actions** overrides a configured subset, and an empty action list means **No actions**. Common action choices and custom exact action names are supported.
+Effective server values resolve from built-in defaults, configuration-file options, then sparse saved overrides. Selected-row help identifies the source of saved model, threshold and policy values. **Ctrl+R — Reset to Defaults** opens a confirmation for the current section and removes its saved overrides, restoring configuration-file values or built-in defaults. From the settings overview, the shortcut first asks which section to reset. Model sections reset model choices and tuning; connection overrides reset within their Connection screen. Escape cancels without changing settings. Text editors keep their normal editing keys. Clearing instructions saves empty text, removing the reviewer saves disabled state, **All actions** overrides a configured subset, and an empty action list means **No actions**. Common action choices and custom exact action names are supported.
 
-Session scope/reviewer selections inherit from the nearest explicitly selected ancestor; otherwise they use the server default. Reviewer mode overrides belong only to the current session. Resetting Session Policy removes both session policy and reviewer-mode overrides, restoring inherited/global values. Changes refresh connected readers and apply to subsequent reviews; an assessment already running keeps its starting configuration. Allow Session also rechecks requests already pending for the same session and action. Current rules and reviewer modes still apply; only approvals settle requests, and other outcomes remain pending. This requires the fork host’s `experimental.permission.reviewPending` API.
+Session scope/reviewer selections inherit from the nearest explicitly selected ancestor; otherwise they use the server default. Reviewer mode overrides belong only to the current session. Both policy pages expose the same three controls: Automation Mode (Classifier, Reviewer, Both), Classifier Mode (Manual, Shadow, Approve), and Reviewer Mode (Off, Shadow, Approve). Session Automation Mode and Reviewer Mode override Global Policy only for the current session; classifier policy retains existing ancestor inheritance. Resetting Session Policy removes all three overrides. Review Rules holds action filtering and additional instructions. Changes refresh connected readers and apply to subsequent reviews; an assessment already running keeps its starting configuration. Allow Session also rechecks requests already pending for the same session and action. Current rules and reviewer modes still apply; only approvals settle requests, and other outcomes remain pending. This requires the fork host’s `experimental.permission.reviewPending` API.
 
 The plugin ID and storage namespace remain `opencode.permission-review`. Historical session selections, connection identities, remembered approvals and history remain readable. Custom connections resolve the final configured model catalog, including late model definitions and variants. Superseded experimental settings RPCs and the former `/permissions-test`, `/permission-reviews`, and `/session-approvals` commands are removed. Use the single settings flow.
 
@@ -68,10 +69,11 @@ These remain the baseline under saved settings. Settings do not rewrite your con
 
 | Option               | Default / meaning                                                                               |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
-| `reviewWith`         | `classifier`, `reviewer`, or `both`; omitted preserves the configured model workflow            |
+| `reviewWith`         | `classifier`, `reviewer`, or `both`; defaults to `both`                                         |
 | `model`              | Required `{ providerID, id, variant? }`                                                         |
 | `mode`               | `chat`; choose `decision` for a classifier                                                      |
 | `defaultMode`        | `manual`, `shadow`, or `auto`; when omitted, legacy `shadow: true` means shadow, otherwise auto |
+| `reviewerMode`       | `off`, `shadow`, or `auto`; defaults to the existing `fallback.mode` (or legacy chat mode)      |
 | `shadow`             | Legacy default selector; ignored when `defaultMode` is present                                  |
 | `minConfidence`      | `0.98`, inclusive range 0–1; shown only for classifiers                                         |
 | `actions`            | Omitted means all exact permission action names; `[]` means none                                |
@@ -80,7 +82,7 @@ These remain the baseline under saved settings. Settings do not rewrite your con
 | `fallback.mode`      | `shadow`; also `off` or `auto`                                                                  |
 | `fallback.timeoutMs` | `10000`, integer range 100–15000 ms                                                             |
 
-The threshold routes decisions; it is not a calibrated probability of safety. Model choices and variants come from the host catalog and are validated on save. Token limits and other generation settings belong to model variants. The Classifier picker only offers decision models and saves `mode: "decision"`; the Reviewer picker only offers chat models. **Provider** chooses a provider and model together; **Model** goes directly to models from the selected provider. Cancelling either picker preserves the saved choice. **Global Policy → Review With** chooses classifier-only, reviewer-only, or combined review. Reviewer-only uses the configured chat model without calling the classifier; its Off/Shadow/Automatic setting and timeout still apply. Classifier-only never calls the chat reviewer. Legacy configuration-file `mode: "chat"` also supports reviewer-only operation with `model` as the chat model.
+The threshold routes decisions; it is not a calibrated probability of safety. Model choices and variants come from the host catalog and are validated on save. Token limits and other generation settings belong to model variants. The Classifier picker only offers decision models and saves `mode: "decision"`; the Reviewer picker only offers chat models. **Provider** chooses a provider and model together; **Model** goes directly to models from the selected provider. Cancelling either picker preserves the saved choice. **Global Policy → Automation Mode** chooses classifier-only, reviewer-only, or combined review. Reviewer-only uses the configured chat model without calling the classifier; its Off/Shadow/Automatic setting and timeout still apply. Classifier-only never calls the chat reviewer. Reviewer-only uses Reviewer Mode independently of the inactive classifier mode. Manual quick presets still require human decisions. In combined mode, classifier Manual/Shadow and the existing agreement rules remain in force. Legacy configuration-file `mode: "chat"` also supports reviewer-only operation with `model` as the chat model.
 
 Connection URLs must be HTTP(S), include any API prefix such as `/v1`, and contain no embedded credentials, query or fragment. Choose the configured provider, no authentication, a new API key, or retain the saved key for an unchanged endpoint. A changed endpoint never inherits the previous key. Saved keys are never prefilled or returned in settings responses; credentials stay in the host credential store. Plugin KV stores only connection metadata. Restoring the configured provider removes the override; old credentials can remain in the host store. Classifier and reviewer connection identities are separate; custom endpoints do not copy the original provider's headers.
 

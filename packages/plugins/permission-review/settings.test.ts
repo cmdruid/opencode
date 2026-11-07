@@ -68,11 +68,18 @@ test.each([
   expect(() => Schema.decodeUnknownSync(SaveSettings)({ patch })).toThrow()
 })
 
-test("review workflow defaults preserve legacy chat, classifier-only and combined configuration", () => {
-  expect(resolveSettings(options).values.reviewWith).toBe("reviewer")
-  expect(resolveSettings({ ...options, mode: "decision" }).values.reviewWith).toBe("classifier")
+test("automation defaults to Both and retains explicit selection", () => {
+  expect(resolveSettings(options).values.reviewWith).toBe("both")
+  expect(resolveSettings({ ...options, mode: "decision" }).values.reviewWith).toBe("both")
   const combined = { ...options, mode: "decision" as const, fallback: { model: options.model } }
   expect(resolveSettings(combined).values.reviewWith).toBe("both")
   expect(resolveSettings(combined, { reviewWith: "reviewer" }).values.reviewWith).toBe("reviewer")
-  expect(resolveSettings(combined, { fallback: null }).values.reviewWith).toBe("classifier")
+  expect(resolveSettings(combined, { fallback: null }).values.reviewWith).toBe("both")
+})
+
+test("legacy chat policy remains the reviewer baseline even with an unused fallback configured", () => {
+  expect(resolveSettings({ ...options, fallback: { model: options.model, mode: "auto" } }).values.reviewerMode).toBe(
+    "shadow",
+  )
+  expect(resolveSettings(options, { reviewerMode: "auto" }).values.reviewerMode).toBe("auto")
 })

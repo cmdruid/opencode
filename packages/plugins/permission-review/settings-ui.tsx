@@ -10,26 +10,28 @@ import type {
   FallbackMode,
   Overrides,
   ReviewMode,
+  ReviewWith,
   SaveSettings,
   ServerSettings,
   SessionApproval,
   State,
 } from "./contract.js"
 
-export const reviewLabels = { manual: "Manual", shadow: "Shadow", auto: "Approve for me" }
-export const reviewWithLabels = { classifier: "Classifier", reviewer: "Reviewer", both: "Classifier + Reviewer" }
-export const fallbackLabels = { off: "Off", shadow: "Shadow", auto: "Automatic" }
+export const reviewLabels = { manual: "Manual", shadow: "Shadow", auto: "Approve" }
+export const reviewWithLabels = { classifier: "Classifier", reviewer: "Reviewer", both: "Both" }
+export const fallbackLabels = { off: "Off", shadow: "Shadow", auto: "Approve" }
 export const presets = {
   "read-only": { title: "Read only", description: "Read files; ask for edits and shell" },
   workspace: { title: "Ask for approval", description: "Local edits; ask for shell and network" },
-  auto: { title: "Approve for me", description: "Local edits; model reviews requests" },
+  auto: { title: "Approve", description: "Local edits; model reviews requests" },
   full: { title: "Full access", description: "Configured limits still apply" },
 }
 export type SessionChange =
   | { type: "preset"; preset: keyof typeof presets }
+  | { type: "automation"; mode: typeof ReviewWith.Type }
   | { type: "reviewer"; mode: ReviewMode }
   | { type: "fallback"; mode: FallbackMode }
-  | { type: "reset"; target: "selection" | "fallback" }
+  | { type: "reset"; target: "selection" | "fallback" | "automation" }
 
 export interface SettingsActions {
   settings(): Promise<ServerSettings>
@@ -157,6 +159,7 @@ export function PermissionSettings(props: {
         "Reviewer",
         "Session Policy",
         "Global Policy",
+        "Review Rules",
       ].includes(item.title),
     )?.title
   }
@@ -165,10 +168,12 @@ export function PermissionSettings(props: {
     if (!scope || (busy() && !section)) return
     if (scope === "Permission settings")
       return menu("Reset to Defaults", "Choose which settings to restore", () =>
-        ["Classifier", "Reviewer", "Global Policy", ...(session() ? ["Session Policy"] : [])].map((title) => ({
-          title,
-          run: () => resetDefaults(title),
-        })),
+        ["Classifier", "Reviewer", "Global Policy", "Review Rules", ...(session() ? ["Session Policy"] : [])].map(
+          (title) => ({
+            title,
+            run: () => resetDefaults(title),
+          }),
+        ),
       )
     const depth = pages().length
     menu("Reset to Defaults?", `${scope}: configuration or built-in defaults`, () => [
@@ -185,6 +190,7 @@ export function PermissionSettings(props: {
             : `Restore ${scope} from configuration or built-in defaults`,
         run: async () => {
           if (scope === "Session Policy") {
+            await change({ type: "reset", target: "automation" })
             await change({ type: "reset", target: "selection" })
             await change({ type: "reset", target: "fallback" })
           } else if (scope.endsWith("connection")) {
@@ -202,7 +208,9 @@ export function PermissionSettings(props: {
                     ? values().mode === "chat"
                       ? ["model", "mode", "fallback"]
                       : ["fallback"]
-                    : ["reviewWith", "defaultMode", "actions", "policy"],
+                    : scope === "Global Policy"
+                      ? ["reviewWith", "defaultMode", "reviewerMode"]
+                      : ["actions", "policy"],
             })
           }
           setPages((items) => {
@@ -394,18 +402,6 @@ export function PermissionSettings(props: {
       ...(values().mode === "decision" && values().fallback
         ? [
             {
-              title: "Default mode",
-              value: fallbackLabels[values().fallback!.mode],
-              run: () =>
-                choose(
-                  "Reviewer mode",
-                  "All sessions on this server",
-                  ["off", "shadow", "auto"] as const,
-                  (item) => fallbackLabels[item],
-                  (mode) => fallback({ mode }),
-                ),
-            },
-            {
               title: "Timeout (ms)",
               value: String(values().fallback!.timeoutMs),
               run: () =>
@@ -444,12 +440,12 @@ export function PermissionSettings(props: {
   const policy = () =>
     menu("Global Policy", "All sessions on this server", () => [
       {
-        title: "Review With",
+        title: "Automation Mode",
         value: reviewWithLabels[values().reviewWith],
         detail: "Use either model, or consult the reviewer for uncertain classifier results",
         run: () =>
           choose(
-            "Review With",
+            "Automation Mode",
             "All sessions on this server",
             ["classifier", "reviewer", "both"] as const,
             (item) => reviewWithLabels[item],
@@ -457,17 +453,32 @@ export function PermissionSettings(props: {
           ),
       },
       {
-        title: "Default automation",
+        title: "Classifier Mode",
         value: reviewLabels[values().defaultMode],
         run: () =>
           choose(
-            "Default automation",
+            "Classifier Mode",
             "All sessions on this server",
             ["manual", "shadow", "auto"] as const,
             (item) => reviewLabels[item],
             (defaultMode) => patch({ defaultMode }),
           ),
       },
+      {
+        title: "Reviewer Mode",
+        value: fallbackLabels[values().reviewerMode],
+        run: () =>
+          choose(
+            "Reviewer Mode",
+            "All sessions on this server",
+            ["off", "shadow", "auto"] as const,
+            (item) => fallbackLabels[item],
+            (reviewerMode) => patch({ reviewerMode }),
+          ),
+      },
+    ])
+  const rules = () =>
+    menu("Review Rules", "All sessions on this server", () => [
       {
         title: "Reviewed actions",
         value:
@@ -527,35 +538,44 @@ export function PermissionSettings(props: {
         session()
           ? [
               {
-                title: "Automation",
+                title: "Automation Mode",
+                value: reviewWithLabels[session()!.reviewWith ?? values().reviewWith],
+                detail: `This session · ${session()!.reviewWithSource ?? "global policy"}`,
+                run: () =>
+                  choose(
+                    "Automation Mode",
+                    "This session; other sessions use Global Policy",
+                    ["classifier", "reviewer", "both"] as const,
+                    (item) => reviewWithLabels[item],
+                    (mode) => change({ type: "automation", mode }),
+                  ),
+              },
+              {
+                title: "Classifier Mode",
                 value: reviewLabels[session()!.mode],
                 detail: `This session · ${session()!.modeSource}`,
                 run: () =>
                   choose(
-                    "Automation",
+                    "Classifier Mode",
                     "This session · Shadow suggests only; you decide",
                     ["manual", "shadow", "auto"] as const,
                     (mode) => reviewLabels[mode],
                     (mode) => change({ type: "reviewer", mode }),
                   ),
               },
-              ...(session()!.fallback
-                ? [
-                    {
-                      title: "Reviewer mode",
-                      value: fallbackLabels[session()!.fallback!.mode],
-                      detail: `This session · ${session()!.fallbackSource}`,
-                      run: () =>
-                        choose(
-                          "Reviewer mode",
-                          "This session; children use the server default",
-                          ["off", "shadow", "auto"] as const,
-                          (mode) => fallbackLabels[mode],
-                          (mode) => change({ type: "fallback", mode }),
-                        ),
-                    },
-                  ]
-                : []),
+              {
+                title: "Reviewer Mode",
+                value: fallbackLabels[session()!.reviewerMode ?? session()!.fallback?.mode ?? values().reviewerMode],
+                detail: `This session · ${session()!.fallbackSource}`,
+                run: () =>
+                  choose(
+                    "Reviewer Mode",
+                    "This session; children use Global Policy",
+                    ["off", "shadow", "auto"] as const,
+                    (mode) => fallbackLabels[mode],
+                    (mode) => change({ type: "fallback", mode }),
+                  ),
+              },
             ]
           : [],
     )
@@ -614,7 +634,7 @@ export function PermissionSettings(props: {
                 run: () =>
                   detail(
                     "Effective permissions",
-                    `${scopeName(session()!)}\nAutomation: ${reviewLabels[session()!.mode]} (${session()!.modeSource})\nModel: ${modelName(session()!.model)}\nInherited from: ${session()!.inheritedFrom ?? "none"}\nReviewer: ${session()!.fallback ? fallbackLabels[session()!.fallback!.mode] : "inactive"} (${session()!.fallbackSource})\n\nConfigured approval requirements and denials always apply. Presets can add requirements; Full access adds none. These are tool approval policies, not an OS sandbox.`,
+                    `${scopeName(session()!)}\nAutomation Mode: ${reviewWithLabels[session()!.reviewWith ?? values().reviewWith]}\nClassifier Mode: ${reviewLabels[session()!.mode]} (${session()!.modeSource})\nModel: ${modelName(session()!.model)}\nInherited from: ${session()!.inheritedFrom ?? "none"}\nReviewer: ${session()!.fallback ? fallbackLabels[session()!.fallback!.mode] : "inactive"} (${session()!.fallbackSource})\n\nConfigured approval requirements and denials always apply. Presets can add requirements; Full access adds none. These are tool approval policies, not an OS sandbox.`,
                   ),
               },
             ]
@@ -636,16 +656,17 @@ export function PermissionSettings(props: {
       },
       {
         title: "Session Policy",
-        value: session() ? reviewLabels[session()!.mode] : "No session",
+        value: session() ? reviewWithLabels[session()!.reviewWith ?? values().reviewWith] : "No session",
         detail: "Session permissions and automation",
         run: sessionMenu,
       },
       {
         title: "Global Policy",
-        value: reviewLabels[values().defaultMode],
-        detail: "Defaults, reviewed actions and instructions",
+        value: reviewWithLabels[values().reviewWith],
+        detail: "Automation, classifier and reviewer defaults",
         run: policy,
       },
+      { title: "Review Rules", detail: "Reviewed actions and additional instructions", run: rules },
       { title: "Activity", detail: "Review history, remembered approvals and effective permissions", run: activity },
     ])
   const root = () =>

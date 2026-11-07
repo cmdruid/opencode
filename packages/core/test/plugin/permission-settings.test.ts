@@ -102,7 +102,6 @@ it.live("invalid server changes leave effective settings unchanged", () =>
     for (const patch of [
       { minConfidence: 2 },
       { reviewWith: "reviewer" as const },
-      { reviewWith: "both" as const },
       { model: Model.Ref.parse("missing/model") },
       { mode: "chat" as const },
       { fallback: { model: Model.Ref.parse("settings/chat#missing"), mode: "auto" as const, timeoutMs: 1000 } },

@@ -49,7 +49,29 @@ export function settingsFixture() {
     change: async (change) => {
       fixture.session = {
         preset: change.type === "preset" ? change.preset : (fixture.session?.preset ?? "configured"),
-        mode: change.type === "reviewer" ? change.mode : "manual",
+        mode:
+          change.type === "reviewer"
+            ? change.mode
+            : change.type === "preset"
+              ? change.preset === "auto"
+                ? "auto"
+                : "manual"
+              : change.type === "reset" && change.target === "selection"
+                ? snapshot().values.defaultMode
+                : (fixture.session?.mode ?? snapshot().values.defaultMode),
+        reviewWith:
+          change.type === "automation"
+            ? change.mode
+            : change.type === "reset" && change.target === "automation"
+              ? snapshot().values.reviewWith
+              : (fixture.session?.reviewWith ?? snapshot().values.reviewWith),
+        reviewWithSource: change.type === "automation" ? "session" : "default",
+        reviewerMode:
+          change.type === "fallback"
+            ? change.mode
+            : change.type === "reset" && change.target === "fallback"
+              ? snapshot().values.reviewerMode
+              : (fixture.session?.reviewerMode ?? snapshot().values.reviewerMode),
         modeSource: "session",
         fallbackSource: "configuration",
         model: baseline.model,

@@ -3,7 +3,7 @@ import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
 import { Clock, Effect, Option, Schema } from "effect"
 import path from "node:path"
 import type { AssertInput } from "@opencode/plugin/permission"
-import { Assessment, Contract, FallbackMode, ReviewMode, Selection, SessionApproval } from "./contract.js"
+import { Assessment, Contract, FallbackMode, ReviewMode, ReviewWith, Selection, SessionApproval } from "./contract.js"
 import { Options, review } from "./review.js"
 import { connections } from "./connections.js"
 import { settings, reviewOptions } from "./settings.js"
@@ -62,21 +62,41 @@ export default Plugin.define({
       }
       return { preset: "configured" as const, mode: yield* mode(sessionID, values) }
     })
+    const automation = Effect.fn(function* (sessionID: string, values: typeof Options.Type) {
+      const value = yield* ctx.storage.get(`automation/${sessionID}`)
+      return value === undefined
+        ? (values.reviewWith ?? "both")
+        : yield* Schema.decodeUnknownEffect(ReviewWith)(value).pipe(Effect.orDie)
+    })
+    const reviewerMode = Effect.fn(function* (sessionID: AssertInput["sessionID"], values: typeof Options.Type) {
+      const value = yield* ctx.storage.get(`fallback/${sessionID}`)
+      if (value !== undefined)
+        return Option.getOrElse(Schema.decodeUnknownOption(FallbackMode)(value), () => "off" as const)
+      // Legacy chat-only sessions stored their reviewer mode with the preset.
+      if (values.mode !== "decision") {
+        const legacy = yield* selection(sessionID, values)
+        if (
+          legacy.preset !== "configured" ||
+          legacy.inheritedFrom ||
+          (yield* ctx.storage.get(`selection/${sessionID}`)) !== undefined ||
+          (yield* ctx.storage.get(`mode/${sessionID}`)) !== undefined
+        )
+          return legacy.mode === "manual" ? "off" : legacy.mode
+      }
+      return values.reviewerMode ?? values.fallback?.mode ?? "shadow"
+    })
     const fallback = Effect.fn(function* (sessionID: AssertInput["sessionID"], values: typeof Options.Type) {
       if (!values.fallback || values.mode !== "decision" || values.reviewWith === "classifier") return undefined
-      const value = yield* ctx.storage.get(`fallback/${sessionID}`)
       return {
         model: yield* connection.model("fallback", values).pipe(Effect.orDie),
-        mode:
-          value === undefined
-            ? (values.fallback.mode ?? "shadow")
-            : Option.getOrElse(Schema.decodeUnknownOption(FallbackMode)(value), () => "off" as const),
+        mode: yield* reviewerMode(sessionID, values),
         timeoutMs: values.fallback.timeoutMs ?? 10_000,
       }
     })
     const state = Effect.fn(function* (sessionID: AssertInput["sessionID"]) {
       const configState = yield* config.read
-      const values = reviewOptions(configState.values)
+      const configured = reviewOptions(configState.values)
+      const values = { ...configured, reviewWith: yield* automation(sessionID, configured) }
       const chat = yield* fallback(sessionID, values)
       const selected = yield* selection(sessionID, values)
       const explicit = yield* ctx.storage.get(`selection/${sessionID}`)
@@ -84,12 +104,18 @@ export default Plugin.define({
       const chatMode = yield* ctx.storage.get(`fallback/${sessionID}`)
       return {
         ...selected,
+        reviewWith: values.reviewWith,
+        reviewWithSource:
+          (yield* ctx.storage.get(`automation/${sessionID}`)) !== undefined
+            ? ("session" as const)
+            : configState.sources.reviewWith,
+        reviewerMode: yield* reviewerMode(sessionID, values),
         modeSource: selected.inheritedFrom
           ? ("ancestor" as const)
           : explicit !== undefined || legacy !== undefined
             ? ("session" as const)
             : configState.sources.defaultMode,
-        fallbackSource: chatMode !== undefined ? ("session" as const) : configState.sources.fallback,
+        fallbackSource: chatMode !== undefined ? ("session" as const) : configState.sources.reviewerMode,
         model:
           values.reviewWith === "reviewer" && chat
             ? chat.model
@@ -117,12 +143,17 @@ export default Plugin.define({
           const values = yield* currentOptions.pipe(Effect.orDie)
           const change = input.change
           if (change.type === "reset") {
-            yield* ctx.storage.remove(`${change.target === "selection" ? "selection" : "fallback"}/${input.sessionID}`)
+            yield* ctx.storage.remove(`${change.target}/${input.sessionID}`)
             if (change.target === "selection") yield* ctx.storage.remove(`mode/${input.sessionID}`)
           }
+          if (change.type === "automation") {
+            if (change.mode === "classifier" && values.mode !== "decision")
+              return yield* Effect.die(new Error("Choose a classifier model first"))
+            if (change.mode === "reviewer" && values.mode === "decision" && !values.fallback)
+              return yield* Effect.die(new Error("Choose a reviewer model first"))
+            yield* ctx.storage.set(`automation/${input.sessionID}`, change.mode)
+          }
           if (change.type === "fallback") {
-            if (!values.fallback || values.mode !== "decision")
-              return yield* Effect.die(new Error("Configure a second opinion for the classifier first"))
             yield* ctx.storage.set(`fallback/${input.sessionID}`, change.mode)
           }
           if (change.type === "preset") {
@@ -225,21 +256,27 @@ export default Plugin.define({
     yield* ctx.permission.hook("experimental.review", (event) =>
       Effect.gen(function* () {
         if (event.result) return
-        const values = yield* currentOptions.pipe(Effect.orDie)
+        const configured = yield* currentOptions.pipe(Effect.orDie)
+        const values = { ...configured, reviewWith: yield* automation(event.request.sessionID, configured) }
         if (values.actions && !values.actions.includes(event.request.action)) return
-        const selected = (yield* selection(event.request.sessionID, values)).mode
-        if (selected === "manual") return
+        const selected = yield* selection(event.request.sessionID, values)
+        const chatOnly = values.reviewWith === "reviewer" && values.mode === "decision"
+        const reviewerOnly = chatOnly || values.mode !== "decision"
+        const chatMode = yield* reviewerMode(event.request.sessionID, values)
+        if (reviewerOnly && chatMode === "off") return
+        // Manual quick presets still require a human. In reviewer-only automation,
+        // the inactive classifier's mode must not gate the chat reviewer.
+        if (selected.mode === "manual" && (!reviewerOnly || !["configured", "auto"].includes(selected.preset))) return
         const started = yield* Clock.currentTimeMillis
         const remembered = (yield* approvals(event.request.sessionID))
           .filter((entry) => entry.action === event.request.action)
           .slice(0, 20)
         const chat = yield* fallback(event.request.sessionID, values)
-        const chatOnly = values.reviewWith === "reviewer" && values.mode === "decision"
         if (chatOnly && (!chat || chat.mode === "off")) return
         const model = chatOnly && chat ? chat.model : yield* connection.model("classifier", values).pipe(Effect.orDie)
         const configuredModel = chatOnly && values.fallback ? values.fallback.model : values.model
         const backend = chatOnly ? "chat" : values.mode
-        const shadow = selected === "shadow" || (chatOnly && chat?.mode === "shadow")
+        const shadow = reviewerOnly ? chatMode === "shadow" : selected.mode === "shadow"
         const reviewed = review(
           ctx,
           event,

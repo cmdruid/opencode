@@ -36,6 +36,7 @@ export type FallbackSettings = typeof FallbackSettings.Type
 
 export const Options = Schema.Struct({
   reviewWith: ReviewWith.pipe(Schema.optional),
+  reviewerMode: FallbackMode.pipe(Schema.optional),
   model: Model.Ref,
   mode: Schema.Literals(["chat", "decision"]).pipe(Schema.optional),
   policy: Schema.String.pipe(Schema.optional),
@@ -52,6 +53,7 @@ export const Options = Schema.Struct({
 
 export const SettingKey = Schema.Literals([
   "reviewWith",
+  "reviewerMode",
   "model",
   "mode",
   "minConfidence",
@@ -65,6 +67,7 @@ export const settingKeys = SettingKey.literals
 export const ValueSource = Schema.Literals(["default", "configuration", "server"])
 export const ServerValues = Schema.Struct({
   reviewWith: ReviewWith,
+  reviewerMode: FallbackMode,
   model: Model.Ref,
   mode: Schema.Literals(["chat", "decision"]),
   minConfidence: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
@@ -82,6 +85,7 @@ export const ServerValues = Schema.Struct({
 export type ServerValues = typeof ServerValues.Type
 export const Overrides = Schema.Struct({
   reviewWith: ReviewWith.pipe(Schema.optional),
+  reviewerMode: FallbackMode.pipe(Schema.optional),
   model: ServerValues.fields.model.pipe(Schema.optional),
   mode: ServerValues.fields.mode.pipe(Schema.optional),
   minConfidence: ServerValues.fields.minConfidence.pipe(Schema.optional),
@@ -159,6 +163,9 @@ export const Assessment = Schema.Struct({
 export type Assessment = typeof Assessment.Type
 
 export const State = Schema.Struct({
+  reviewWith: ReviewWith.pipe(Schema.optional),
+  reviewWithSource: Schema.Literals(["default", "configuration", "server", "session"]).pipe(Schema.optional),
+  reviewerMode: FallbackMode.pipe(Schema.optional),
   ...Selection.fields,
   modeSource: Schema.Literals(["default", "configuration", "server", "session", "ancestor"]),
   fallbackSource: Schema.Literals(["default", "configuration", "server", "session"]),
@@ -194,9 +201,13 @@ export const Contract = Rpc.define({
               type: Schema.Literal("preset"),
               preset: Schema.Literals(["read-only", "workspace", "auto", "full"]),
             }),
+            Schema.Struct({ type: Schema.Literal("automation"), mode: ReviewWith }),
             Schema.Struct({ type: Schema.Literal("reviewer"), mode: ReviewMode }),
             Schema.Struct({ type: Schema.Literal("fallback"), mode: FallbackMode }),
-            Schema.Struct({ type: Schema.Literal("reset"), target: Schema.Literals(["selection", "fallback"]) }),
+            Schema.Struct({
+              type: Schema.Literal("reset"),
+              target: Schema.Literals(["selection", "fallback", "automation"]),
+            }),
           ]),
         }),
       ),

@@ -136,3 +136,17 @@ Validation:
 
 Artifact SHA256: `6bf543958adb4328a068fde874694239b214ace1c2a18f2d0c6e23139b18ddd6`.
 Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.3/node_modules/@cmdcode/opencode-auto-permissions`. Backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T00-15-54-219Z`. Full existing effective settings (plus the new derived workflow field), all ten session selections and the server endpoint were verified unchanged. No host replacement/restart, remote push or npm publication.
+
+## Matching session/global policy controls — 2026-11-06
+
+Alpha.4 gives both policy pages exactly three controls, in the same order: Automation Mode (Classifier, Reviewer, Both), Classifier Mode (Manual, Shadow, Approve), and Reviewer Mode (Off, Shadow, Approve). Both is the default; explicit saved choices remain. Review Rules contains action filtering and additional instructions. Session automation overrides are local and reset with the other session choices. Reviewer Mode is configurable separately from its model/connection. Reviewer-only operation uses reviewer mode without an inactive classifier gating it; manual quick presets and combined agreement rules remain. Legacy chat-only preset/mode storage is preserved.
+
+Validation:
+
+- Full plugin suite: 46 pass, 350 assertions. Six Core permission suites: 35 pass, 408 assertions.
+- Ten repetitions: UI/settings 240 pass, 1,670 assertions; five Core policy/approval suites 320 pass, 3,550 assertions. Final plugin suite includes the additional legacy chat-baseline regression.
+- Official plugin/Core TypeScript checks and root `bun run check` (36/36) pass.
+- Exact artifact checked against the installed host using isolated model fixtures, restart persistence, custom connection, queued Allow Session and bundled TUI: `/tmp/permission-package-check-N1Bk9z/verification.json`.
+- Production story inspection: `/tmp/perm-compact-preview-S2UACM`, including both three-row policy pages. Live installed-client preview: `/tmp/perm-compact-preview-CsAbvg`. The preview harness was corrected to distinguish the persistent story footer from the current page and to wait for full labels after resizing.
+
+Artifact SHA256: `5b174bcea1ef45c915296874135aecb7eb60477efea7bb20ae356a9abae034b5`. Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.4/node_modules/@cmdcode/opencode-auto-permissions`. Backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T00-51-32-097Z`. All prior effective settings and ten session selections matched after excluding newly exposed policy fields. New fields reflect the prior reviewer mode and default Both. Same host/endpoint; no live review, approval, restart or npm publication.
