@@ -16,6 +16,7 @@ import tempfile
 import time
 
 package = pathlib.Path(__file__).resolve().parents[2]
+release = pathlib.Path(os.environ.get("SUDO_PACKAGE_ROOT", str(package)))
 scenario = sys.argv[1]
 with tempfile.TemporaryDirectory(prefix="sudo-pty-test-") as directory:
     temporary = pathlib.Path(directory)
@@ -69,7 +70,7 @@ os.execv(args[0], args)
         bundle = temporary / "plugin"
         bundle.mkdir()
         for name in ("package.json", "index.ts", "rpc.ts", "requests.ts", "tui.js"):
-            shutil.copy2(package / name, bundle / name)
+            shutil.copy2(release / name, bundle / name)
         (bundle / "node_modules").symlink_to(package / "node_modules")
         binary = bundle / "native/bin/linux-x64"
         binary.mkdir(parents=True)
@@ -169,7 +170,7 @@ os.execv(args[0], args)
         assert (b"\r" if scenario == "loaded" else b"r") in log, "raw-input logging was not exercised"
         for secret in (b"DUMMY_NATIVE_AUTH_PASSWORD", b"DUMMY_NATIVE_AUTH_TAIL", b"DUMMY_NATIVE_AUTH_BUFFER", b"second-line"):
             assert secret not in output, "secret leaked into tool result"
-            assert secret not in log, "secret leaked into renderer input log"
+            assert secret not in log, f"{secret!r} leaked into renderer input log: {log!r}"
         if released: assert b"z" in log, "fresh input was not delivered after resume"
         assert b"DUMMY_NATIVE_AUTH_TAIL" not in transcript, "cleanup echoed trailing input"
         result = json.loads(output)

@@ -15,7 +15,8 @@
     "test": "bun run build && bun test --timeout 30000",
     "build:native": "bun script/build-native.ts",
     "prepack": "bun run build",
-    "build": "bun run build:native && bun script/build-tui.ts"
+    "build": "bun run build:native && bun script/build-tui.ts",
+    "verify:archive": "bun script/verify-archive.ts"
   },
   "peerDependencies": {
     "@opencode/plugin": "^2.2.5 || ^0.0.0-dev",
@@ -40,8 +41,6 @@
     "index.ts",
     "rpc.ts",
     "requests.ts",
-    "tui.tsx",
-    "prompt.tsx",
     "native.ts",
     "native/bin/linux-x64/opencode-sudo-tty",
     "native/bin/linux-x64/opencode-sudo-tty.sha256",
@@ -51,7 +50,8 @@
     "README.md",
     "LICENSE",
     "RELEASING.md",
-    "tui.js"
+    "tui.js",
+    "CHANGELOG.md"
   ],
   "os": [
     "linux"

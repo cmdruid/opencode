@@ -1,7 +1,7 @@
 import pathlib, tempfile, subprocess, shlex, time, os, json, shutil
 package = pathlib.Path(__file__).resolve().parents[2]
 tmux = shutil.which('tmux')
-if not tmux: raise SystemExit('tmux is required for the overlay demonstration')
+if not tmux: raise SystemExit('tmux is required for the overlay regression')
 with tempfile.TemporaryDirectory(prefix='sudo-ui-tmux-') as root:
     directory = pathlib.Path(root)
     fake = directory/'fake-sudo'
@@ -38,7 +38,6 @@ os.execv(args[0],args)
             assert 'OpenCode conversation UPDATED' in screen, screen
             assert 'OpenCode | Run as root' in screen, screen
             assert screen.splitlines().index('--- OpenCode | Run as root ---') == rows - 8, screen
-            pathlib.Path(f'/tmp/opencode-sudo-ui-spike-{columns}.txt').write_text(screen)
             command('send-keys','-t','test','DUMMY_NATIVE_AUTH_PASSWORD','Enter')
             deadline=time.monotonic()+5
             while not (directory/'release.json').exists() and time.monotonic()<deadline: time.sleep(.02)

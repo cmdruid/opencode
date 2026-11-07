@@ -32,6 +32,8 @@ test.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       expect(await extract.exited).toBe(0)
       const root = join(directory, "package")
       const metadata = await Bun.file(join(root, "package.json")).json()
+      const files = await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: root, onlyFiles: true }))
+      expect(files.toSorted()).toEqual([...manifest.files, "package.json"].toSorted())
       expect(metadata.name).toBe("@cmdcode/opencode-safe-sudo")
       expect(metadata.version).toBe(manifest.version)
       expect(metadata.publishConfig).toEqual({ access: "public", registry: "https://registry.npmjs.org/" })

@@ -6,7 +6,7 @@ A dedicated `sudo` tool for OpenCode v2. **OpenCode never asks for or transports
 
 The release package installs like an ordinary OpenCode plugin. It includes its native helper: **no separate helper installation, compiler, shell commands, sudoers edits, or setup password prompt.** Install/enable the package through OpenCode's normal plugin configuration or plugin manager.
 
-The package is configured for its first release, **0.1.0**, and is not yet published. After publication, enable it with:
+Enable the package after its first publication:
 
 ```json
 {
@@ -54,22 +54,13 @@ The installed package (including its native binary and checksum) is trusted code
 
 This is not an absolute guarantee against a compromised OS, terminal/SSH/tmux, sudo/PAM, native helper, OpenCode installation, or other same-user code. Those remain trusted. A user-approved arbitrary root command can also compromise the machine. Terminal/session recorders and configured sudo/PAM audit behavior are outside the plugin's control. Passwords entered in chat, tool arguments, the approval dialog, or before the system sudo prompt are outside this protected flow. Never send a password to the agent.
 
-OpenCode's `!` shell mode is useful precedent for command execution, but not authentication: it sends a command through `session.shell`, closes stdin, and captures output. The editor integration provides the renderer suspend/resume API. Neither alone establishes the native foreground ownership and input flushing required here.
-
 See [native/README.md](native/README.md) for the process boundary. Installing the plugin makes no system-wide privileged changes.
 
 ## Verification
 
 From this package: `bun run build`, `bun typecheck`, `bun run typecheck:tsc`, and `bun test --timeout 30000`. From the repository root: `bun run check`.
 
-Tests exercise the real tool/RPC registry, loaded TUI plugin, approval scrolling at narrow/wide sizes, private socket permissions, single-use claims, malformed frames, and cancellation. Native tests require Python 3, a C compiler, and real Unix pseudo-terminals. They run the production broker, renderer, handoff code, and native helper with an unprivileged fake sudo. Dummy credentials are deliberately printed on both authentication streams to prove they do not reach tool output; raw-input diagnostics are enabled to check the renderer boundary. They also cover passwordless execution, authentication failure, interrupted input, delayed authentication, timeouts, continuous output, stale/remote claims, Ctrl-Z, leftover input, helper crashes, and package replacement/removal during authentication. A packaging test extracts the actual release archive and verifies both plugin entrypoints, executable availability, and rejection of a damaged checksum. They never use real credentials or execute real sudo. Real sudo/PAM policy variants and live SSH/tmux sessions still need manual verification before release.
-
-## Existing implementations reviewed
-
-- [opencode-sudo-popup](https://github.com/uvindusl/opencode-sudo-popup): a Linux GJS/GTK4/libadwaita askpass popup requiring a graphical display. Its inspected implementation watches `bash`, while this checkout uses `shell`, and shares `/tmp/opencode-sudo-reason` between requests.
-- [OpenCode PR #38640](https://github.com/anomalyco/opencode/pull/38640): a broader PTY/SecureInput proposal, closed without merging at the time of review. It is not an installable sudo plugin.
-
-The local Pi extension informed the dedicated-tool interaction. This implementation uses native sudo authentication instead of collecting a password in the harness.
+Tests exercise the real tool/RPC registry, loaded TUI plugin, approval scrolling at narrow/wide sizes, private socket permissions, single-use claims, malformed frames, and cancellation. Native tests require Python 3, a C compiler, and real Unix pseudo-terminals. They run the production broker, renderer, handoff code, and native helper with an unprivileged fake sudo. Dummy credentials are deliberately printed on both authentication streams to prove they do not reach tool output; raw-input diagnostics are enabled to check the renderer boundary. They also cover passwordless execution, authentication failure, interrupted input, delayed authentication, timeouts, continuous output, stale/remote claims, Ctrl-Z, leftover input, helper crashes, and package replacement/removal during authentication. A packaging test extracts the actual release archive and verifies both plugin entrypoints, executable availability, and rejection of a damaged checksum. They never use real credentials or execute real sudo. The maintainer has confirmed successful live use. Additional sudo/PAM policies and SSH setups should be checked on the systems being supported.
 
 ## Terminal return
 
@@ -77,9 +68,7 @@ The flow is **OpenCode review → native sudo authentication and execution → a
 
 Requests wait behind other dialogs and suspended editor handoffs. Queued requests retain separate reviews. A server `closed` event may precede terminal restoration; the next review opens only after the helper finishes, the renderer resumes, and the previous dialog closes. Route changes and plugin disposal cancel active native work through the same cleanup path.
 
-Regression coverage includes injected terminal-restoration failures, a deterministic cleanup barrier with trailing dummy input and paste sequences, and a loaded-plugin PTY test with early server closure and queued approvals. Fresh-frame tests cover successive requests, an in-flight frame, and cancellation. Run `python3 test/fixture/overlay.py` for an isolated fake-sudo tmux demonstration at 40×16, 80×24, and 120×40.
-
-Manual acceptance with real sudo/PAM remains owner-driven before release. Development clients should use `bun run dev:live` so they do not replace the elected server.
+Regression coverage includes injected terminal-restoration failures, a deterministic cleanup barrier with trailing dummy input and paste sequences, and a loaded-plugin PTY test with early server closure and queued approvals. Fresh-frame tests cover successive requests, an in-flight frame, and cancellation. Run `python3 test/fixture/overlay.py` for the isolated fake-sudo tmux regression at 40×16, 80×24, and 120×40.
 
 ## Releasing
 

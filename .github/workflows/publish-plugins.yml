@@ -2,6 +2,13 @@ name: Publish cmdcode plugins
 
 on:
   push:
+    branches:
+      - custom
+    paths:
+      - "packages/plugins/sudo/**"
+      - ".github/workflows/publish-plugins.yml"
+      - "package.json"
+      - "bun.lock"
     tags:
       - "opencode-safe-sudo-v*"
   # Manual runs only build/test/upload; they never publish.
@@ -30,7 +37,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24"
+          node-version: "26"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
@@ -46,7 +53,7 @@ jobs:
             import { valid } from "semver"
             const pkg = await Bun.file("packages/plugins/sudo/package.json").json()
             if (pkg.name !== "@cmdcode/opencode-safe-sudo" || !valid(pkg.version)) throw new Error("Invalid release package")
-            if (process.env.GITHUB_EVENT_NAME === "push" && process.env.GITHUB_REF !== `refs/tags/opencode-safe-sudo-v${pkg.version}`) throw new Error("Tag must match package version")
+            if (process.env.GITHUB_REF?.startsWith("refs/tags/") && process.env.GITHUB_REF !== `refs/tags/opencode-safe-sudo-v${pkg.version}`) throw new Error("Tag must match package version")
             if (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" && process.env.GITHUB_REF !== "refs/heads/custom") throw new Error("Select custom for a manual build")
             await Bun.write(process.env.GITHUB_OUTPUT, `dist_tag=${pkg.version.includes("-") ? "next" : "latest"}\n`)
           '
@@ -69,7 +76,7 @@ jobs:
         working-directory: packages/plugins/sudo
         env:
           OPENCODE_SUDO_TARBALL: ${{ runner.temp }}/plugin-release/${{ steps.pack.outputs.archive }}
-        run: bun test --timeout 30000
+        run: bun run verify:archive "$OPENCODE_SUDO_TARBALL"
       - name: Install and load outside the workspace
         env:
           ARCHIVE: ${{ steps.pack.outputs.archive }}
@@ -96,7 +103,7 @@ jobs:
     steps:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24"
+          node-version: "26"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: cmdcode-plugin-release
