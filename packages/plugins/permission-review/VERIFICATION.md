@@ -167,3 +167,14 @@ Validation:
 - Reviewer format verification: `/tmp/perm-json-reviewer-verification.json`. Configuration/settings backup: `~/.opencode/backups/before-json-reviewer-2026-11-07T01-43-50-654Z`.
 
 Artifact SHA256: `77d4059590bec0a7b2a45c61c6eba5d4f328d4d4a0355372f3dfe777e3a50206`. Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.5/node_modules/@cmdcode/opencode-auto-permissions`. Installation backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T01-44-03-954Z`. Full effective settings and all ten session selections preserved during plugin replacement. Reviewer variant is the only deliberate settings change; cutoff stays 90%. Same host/endpoint; no restart or npm publication.
+
+## Provider-independent fenced responses — 2026-11-06
+
+Alpha.6 replaces the Gemma-specific configuration workaround with one shared response parser for reviewer-only and classifier-fallback reviews. It accepts bare JSON or one whole Markdown code block (backticks/tildes, optional JSON label, whitespace and CRLF). Only the outer fence is removed; the original ReviewResult schema still validates the object. Prose, multiple blocks, broken fences, malformed JSON and invalid decision/reason fields escalate. Denial, escalation, fallback agreement and timeout behavior are unchanged.
+
+- Full plugin: 49 pass, 452 assertions. Review suite repeated ten times: 200 pass, 2,560 assertions. Official plugin TypeScript and root check36/36 pass.
+- Exact artifact with installed host: `/tmp/permission-package-check-ZDZZNV/verification.json`; isolated install, restart persistence, custom connection, queued approvals and bundled TUI pass.
+- Plain `maple/gemma4-31b` generated a fenced response to fictional evidence through the installed host. The production review function parsed it successfully. No live session prompt, permission request or tool execution was submitted.
+- Removed the Gemma `permission-review` configuration variant and restored the plain model selection. Preserved all ten sessions' policy selections, accounting for the intended inherited reviewer-model change. Verification: `/tmp/perm-remove-json-variant-verification.json`. Backup: `~/.opencode/backups/before-remove-json-variant-2026-11-07T02-26-49-128Z`.
+
+Artifact SHA256: `addee9059d436922f8020baacc73dedaa32d8f8d3845dfb05ae77ab79bafc468`. Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.6/node_modules/@cmdcode/opencode-auto-permissions`. Installation backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T02-26-37-814Z`. No host replacement/restart, remote push or npm publication. Per-model variants are no longer required for fenced responses.

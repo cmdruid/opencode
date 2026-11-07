@@ -86,7 +86,7 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
       model: options.model,
       prompt,
     })
-    const result = Schema.decodeUnknownOption(Schema.fromJsonString(ReviewResult))(response.text)
+    const result = parseDecision(response.text)
     return Option.getOrElse(result, () => ({
       decision: "escalate" as const,
       reason: "Reviewer returned an invalid decision; please review the request.",
@@ -158,7 +158,7 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
   // Reuse the exact evidence snapshot without exposing the classifier's choice or scores to the second opinion.
   const assessment = yield* ctx.experimental.generate.text({ model: fallback.model, prompt }).pipe(
     Effect.map((response) => {
-      const parsed = Schema.decodeUnknownOption(Schema.fromJsonString(ReviewResult))(response.text)
+      const parsed = parseDecision(response.text)
       return Option.isSome(parsed)
         ? { ...parsed.value, status: "completed" as const }
         : {
@@ -206,6 +206,13 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
     fallback: detail,
   }
 })
+
+function parseDecision(text: string) {
+  const trimmed = text.trim()
+  // Accept one whole fenced response, never extract a decision from surrounding prose.
+  const fenced = trimmed.match(/^(`{3,}|~{3,})[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n\1$/i)
+  return Schema.decodeUnknownOption(Schema.fromJsonString(ReviewResult))(fenced?.[2] ?? trimmed)
+}
 
 function contextObservations(
   history: Effect.Success<ReturnType<Plugin.Context["session"]["context"]>>,

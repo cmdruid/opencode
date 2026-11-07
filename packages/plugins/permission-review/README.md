@@ -126,30 +126,6 @@ MIT; see LICENSE.
 
 ### Reviewer JSON output
 
-The reviewer must return a bare JSON object with `decision` and `reason`. Markdown fences and prose remain invalid and require human review. For an OpenAI-compatible provider that supports JSON Schema output (including the tested Maple Gemma 4 31B endpoint), add this variant to the chat model's `variants` array in OpenCode configuration, then select it under **Reviewer → Model → gemma4-31b → permission-review** (using your own model name when different):
+The reviewer returns a JSON object with `decision` and a nonempty `reason`. The plugin accepts bare JSON or one complete Markdown code block, with no language label or a `json` label. Backtick and tilde fences, surrounding whitespace, and Windows line endings are supported. Both reviewer-only and classifier-fallback paths use the same parser, independent of model and provider. No special model variant or provider-specific output configuration is required.
 
-```json
-{
-  "id": "permission-review",
-  "body": {
-    "response_format": {
-      "type": "json_schema",
-      "json_schema": {
-        "name": "permission_review",
-        "strict": true,
-        "schema": {
-          "type": "object",
-          "properties": {
-            "decision": { "type": "string", "enum": ["approve", "deny", "escalate"] },
-            "reason": { "type": "string", "minLength": 1 }
-          },
-          "required": ["decision", "reason"],
-          "additionalProperties": false
-        }
-      }
-    }
-  }
-}
-```
-
-For example, the resulting reviewer reference is `maple/gemma4-31b#permission-review`. This uses the host's existing variant support; no host update is required. Other providers may need their own output-format configuration. The plugin still validates every response and does not approve malformed output.
+Only the outer fence is removed before applying the normal decision schema. Surrounding prose, multiple blocks, malformed JSON, missing fields and unsupported decisions remain invalid and require human review. Chat disagreement and the existing approval rules are unchanged.

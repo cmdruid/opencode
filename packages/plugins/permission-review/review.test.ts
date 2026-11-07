@@ -260,7 +260,6 @@ it.effect("fallback disagreement, malformed output and provider failure preserve
       '{"decision":"deny","reason":"Not authorized"}',
       '{"decision":"escalate","reason":"Needs context"}',
       '{"decision":"approve"}',
-      '```json\n{"decision":"approve","reason":"Unsafe parsing"}\n```',
       Effect.fail("Provider unavailable"),
     ]) {
       const fixture = context(text, [uncertain])
@@ -268,6 +267,67 @@ it.effect("fallback disagreement, malformed output and provider failure preserve
       expect(result.decision).toBe("escalate")
       expect(result.fallback?.applied).toBe(false)
       expect(fixture.prompts).toHaveLength(1)
+    }
+  }),
+)
+
+it.effect("chat and fallback accept a single fenced JSON decision across providers", () =>
+  Effect.gen(function* () {
+    for (const decision of ["approve", "deny", "escalate"] as const) {
+      const body = JSON.stringify({ decision, reason: "Scoped request" })
+      for (const text of [
+        body,
+        `  ${body}\n`,
+        `\`\`\`json\n${body}\n\`\`\``,
+        `\`\`\`\n${body}\n\`\`\``,
+        ` \n\`\`\`JSON\r\n${body}\r\n\`\`\`\n `,
+        `~~~~json\n${body}\n~~~~`,
+      ]) {
+        const fixture = context(text, [uncertain])
+        expect(yield* review(fixture.ctx, event, { ...options, mode: "chat" })).toEqual({
+          decision,
+          reason: "Scoped request",
+        })
+        const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })
+        expect(result.fallback).toMatchObject({
+          decision,
+          reason: "Scoped request",
+          status: "completed",
+          applied: decision === "approve",
+        })
+        expect(result.decision).toBe(decision === "approve" ? "approve" : "escalate")
+      }
+    }
+  }),
+)
+
+it.effect("fence normalization rejects prose, multiple blocks, malformed JSON and invalid decisions", () =>
+  Effect.gen(function* () {
+    const body = '{"decision":"approve","reason":"Scoped request"}'
+    const block = `\`\`\`json\n${body}\n\`\`\``
+    for (const text of [
+      `Here is my decision:\n${block}`,
+      `${block}\nPlease proceed.`,
+      `${block}\n${block}`,
+      `\`\`\`json\n${body}`,
+      `\`\`\`json\n${body}\n~~~`,
+      `\`\`\`javascript\n${body}\n\`\`\``,
+      `\`\`\`json\n${body}\n${body}\n\`\`\``,
+      '```json\n{"decision":"approve"}\n```',
+      '```json\n{"decision":"always","reason":"Unsupported"}\n```',
+      '```json\n{"decision":"approve","reason":42}\n```',
+      '```json\n{"decision":"approve","reason":""}\n```',
+      `\`\`\`json\n[${body}]\n\`\`\``,
+      '```json\n{"decision":"approve","reason":"Malformed",}\n```',
+    ]) {
+      const fixture = context(text, [uncertain])
+      expect(yield* review(fixture.ctx, event, { ...options, mode: "chat" })).toMatchObject({
+        decision: "escalate",
+        reason: expect.stringContaining("invalid decision"),
+      })
+      const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })
+      expect(result.decision).toBe("escalate")
+      expect(result.fallback).toMatchObject({ status: "invalid", applied: false })
     }
   }),
 )
