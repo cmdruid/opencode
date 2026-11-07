@@ -8,7 +8,7 @@ import type { SessionInbox } from "@opencode/schema/session-inbox"
 import type { SessionError } from "@opencode/schema/session-error"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { TokenUsage } from "@opencode/schema/token-usage"
-import type { JsonSchema, Types } from "effect"
+import type { Effect, JsonSchema, Types } from "effect"
 import type { ModelHooks } from "./registration.js"
 
 export interface SessionPrompt {
@@ -219,3 +219,15 @@ export type SessionDomain = Pick<
   Pick<ExperimentalSessionApi<unknown>, "wait" | "instructions"> & {
     readonly hook: ModelHooks<SessionHooks>
   }
+
+/** Experimental: original user text, independent of compaction. */
+export interface ExperimentalSessionDomain {
+  /**
+   * Reads delivered user messages in chronological order from this session's persisted history.
+   * Excludes messages at/after a staged revert, queued input, summaries and synthetic messages.
+   * No parent-session history is added. Experimental: may change without compatibility guarantees.
+   */
+  readonly userMessages: (input: {
+    readonly sessionID: Session.ID
+  }) => Effect.Effect<ReadonlyArray<{ readonly id: SessionMessage.ID; readonly text: string }>, unknown>
+}

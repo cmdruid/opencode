@@ -219,3 +219,15 @@ export type SessionDomain = Pick<
   Pick<ExperimentalSessionApi, "wait" | "instructions"> & {
     readonly hook: ModelHooks<SessionHooks>
   }
+
+/** Experimental: original user text, independent of compaction. */
+export interface ExperimentalSessionDomain {
+  /**
+   * Reads delivered user messages in chronological order from this session's persisted history.
+   * Excludes messages at/after a staged revert, queued input, summaries and synthetic messages.
+   * No parent-session history is added. Experimental: may change without compatibility guarantees.
+   */
+  readonly userMessages: (input: {
+    readonly sessionID: Session.ID
+  }) => Promise<ReadonlyArray<{ readonly id: SessionMessage.ID; readonly text: string }>>
+}

@@ -15,7 +15,7 @@ import type { ExperimentalPermissionDomain, PermissionDomain } from "./permissio
 import type { ProviderDomain } from "./provider.js"
 import type { ReferenceDomain } from "./reference.js"
 import type { RpcDomain } from "./rpc.js"
-import type { SessionDomain } from "./session.js"
+import type { ExperimentalSessionDomain, SessionDomain } from "./session.js"
 import type { ShellDomain } from "./shell.js"
 import type { SkillDomain } from "./skill.js"
 import type { StorageDomain } from "./storage.js"
@@ -35,6 +35,7 @@ export interface Context {
   readonly event: EventDomain
   readonly experimental: {
     readonly permission: ExperimentalPermissionDomain
+    readonly session: ExperimentalSessionDomain
     readonly terminal: Pick<ExperimentalApi<unknown>["persistentPty"], "read">
     /** Stateless generation with a model and a prompt: no session, history or tools. */
     readonly generate: ExperimentalGenerateApi<unknown>

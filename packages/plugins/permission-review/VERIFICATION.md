@@ -178,3 +178,16 @@ Alpha.6 replaces the Gemma-specific configuration workaround with one shared res
 - Removed the Gemma `permission-review` configuration variant and restored the plain model selection. Preserved all ten sessions' policy selections, accounting for the intended inherited reviewer-model change. Verification: `/tmp/perm-remove-json-variant-verification.json`. Backup: `~/.opencode/backups/before-remove-json-variant-2026-11-07T02-26-49-128Z`.
 
 Artifact SHA256: `addee9059d436922f8020baacc73dedaa32d8f8d3845dfb05ae77ab79bafc468`. Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.6/node_modules/@cmdcode/opencode-auto-permissions`. Installation backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T02-26-37-814Z`. No host replacement/restart, remote push or npm publication. Per-model variants are no longer required for fenced responses.
+
+## Authorization survives compaction — 2026-11-06
+
+Alpha.7 reads original user-authored text through the new host-only `experimental.session.userMessages` API (Effect and Promise). The host reads existing persisted history in chronological order and excludes queued input, staged/committed reverted messages, synthetic messages and summaries. The plugin uses active context for tool inputs/observations and original text for authorization, supplying the same evidence to both evaluators and instructing them to honor later restrictions. No cache or additional persisted records. Existing evidence-budget escalation remains. Hosts without the API escalate with an update-needed explanation. No public Protocol/HttpApi change or generated-client edits.
+
+Validation:
+
+- Plugin: 51 pass, 471 assertions. Seven Core permission/history suites: 36 pass, 418 assertions.
+- Ten repeats: review220/2750, host history/permission120/580. Covers repeated compaction, later restrictions, queued input, parent isolation, reopening plugin context, Promise adaptation, staged/cleared/committed reverts and missing/failed host support.
+- Official plugin/Core/SDK TypeScript and root `bun run check`36/36 pass. Corrected an older Core fixture still expecting confidence routing after the prior switch to approval scores.
+- Exact host/plugin check: `/tmp/permission-package-check-JlPLaA/verification.json`. An imported fixture with two original user messages and a completed compaction has zero user messages in active context; its request auto-approves without an Allow Session example, proving original authorization reaches the compiled host/plugin. Existing restart persistence, custom connection, queued approval and packaged TUI checks pass. No live provider replay or tool execution.
+
+Plugin SHA256: `0b51167d5f24be90020d826a2adad5a8fe787bb25b24208476baff62735a7a30`. Matching host `2.2.5-cmdruid.permhistory.20261107` SHA256: `9d545746689a1ce6a6b72a5dfffafc19127e998ad3b3c396ac1c045c5c9c2db2`, including bundled web UI. Staged at `~/.local/share/opencode/previews/perm-history-20261107/opencode`; plugin installed but not selected at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.7/node_modules/@cmdcode/opencode-auto-permissions`. Old binary backed up under `~/.opencode/backups/before-host-perm-history-20261107`. Live CVE session remains running, so host activation is pending permission to interrupt it. npm publication remains deferred.

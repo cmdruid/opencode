@@ -148,7 +148,7 @@ for (const trial of [
   { shadow: false, confidence: 0.99, decision: "approve" },
   { shadow: false, confidence: 0.5, decision: "escalate" },
 ] as const) {
-  it.live(`audits classifier confidence ${trial.confidence} with shadow ${trial.shadow}`, () =>
+  it.live(`audits classifier approval score ${trial.confidence} with shadow ${trial.shadow}`, () =>
     Effect.gen(function* () {
       const plugins = yield* Plugin.Service
       const hooks = yield* PluginHooks.Service
@@ -170,7 +170,7 @@ for (const trial of [
                     name: "permission",
                     choice: "approve",
                     confidence: trial.confidence,
-                    probabilities: [{ value: "approve", probability: 0.995 }],
+                    probabilities: [{ value: "approve", probability: trial.confidence }],
                   },
                 ],
               }),
@@ -193,7 +193,7 @@ for (const trial of [
         classifier: {
           choice: "approve",
           confidence: trial.confidence,
-          probabilities: [{ value: "approve", probability: 0.995 }],
+          probabilities: [{ value: "approve", probability: trial.confidence }],
           threshold: 0.98,
         },
       })

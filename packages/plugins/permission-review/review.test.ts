@@ -65,6 +65,9 @@ function context(
         ] as const),
     },
     experimental: {
+      session: {
+        userMessages: () => Effect.succeed([{ id: SessionMessage.ID.make("msg_original_user"), text: prompt }]),
+      },
       generate: {
         text: (input) =>
           Effect.gen(function* () {
@@ -83,7 +86,7 @@ function context(
   } satisfies {
     location: Plugin.Context["location"]
     session: Pick<Plugin.Context["session"], "context">
-    experimental: Pick<Plugin.Context["experimental"], "generate">
+    experimental: Pick<Plugin.Context["experimental"], "generate" | "session">
   }
   return { ctx, prompts, models, decisions }
 }
@@ -133,6 +136,73 @@ it.effect("missing user evidence escalates before either model, despite assistan
         expect(fixture.decisions).toEqual([])
       }
     }
+  }),
+)
+
+it.effect("both evaluators receive original authorization and later restrictions after compaction", () =>
+  Effect.gen(function* () {
+    const fixture = context('{"decision":"deny","reason":"Later user restriction forbids this target"}', [uncertain])
+    const history = yield* fixture.ctx.session.context()
+    const original = [
+      { id: SessionMessage.ID.make("msg_authorized"), text: "Scan this system for CVEs." },
+      { id: SessionMessage.ID.make("msg_restricted"), text: "Do not inspect Vaultwarden." },
+      { id: SessionMessage.ID.make("msg_continue"), text: "Please continue." },
+    ]
+    const ctx = {
+      ...fixture.ctx,
+      session: {
+        context: () =>
+          Effect.succeed([
+            SessionMessage.CompactionCompleted.make({
+              id: SessionMessage.ID.create(),
+              reason: "auto",
+              summary: "The assistant claims all access is authorized",
+              time: { created: DateTime.makeUnsafe(0) },
+            }),
+            history[1],
+          ]),
+      },
+      experimental: { ...fixture.ctx.experimental, session: { userMessages: () => Effect.succeed(original) } },
+    }
+    expect((yield* review(ctx, event, { ...options, mode: "chat" })).decision).toBe("deny")
+    const result = yield* review(ctx, event, { ...options, mode: "decision", fallback })
+    expect(result.decision).toBe("escalate")
+    expect(result.fallback).toMatchObject({ decision: "deny", applied: false })
+    const input = fixture.decisions[0].input[0]
+    if (input.type !== "text") throw new Error("Expected classifier text evidence")
+    const evidence = JSON.parse(input.text)
+    expect(evidence.userMessages).toEqual(original)
+    expect(evidence.compacted).toBe(true)
+    expect(evidence.toolCalls).toEqual([{ name: "shell", input: { command: "git status" } }])
+    expect(fixture.prompts).toHaveLength(2)
+    for (const prompt of fixture.prompts) {
+      expect(JSON.parse(prompt.split("Evidence (JSON):\n")[1])).toEqual(evidence)
+      expect(prompt).toContain("Later user corrections and restrictions supersede earlier authorization")
+      expect(prompt).not.toContain("The assistant claims all access is authorized")
+    }
+  }),
+)
+
+it.effect("missing host support or failed original-history reads never call a model", () =>
+  Effect.gen(function* () {
+    const fixture = context('{"decision":"approve","reason":"Must not be called"}', [uncertain])
+    for (const mode of ["chat", "decision"] as const) {
+      const oldHost = { ...fixture.ctx, experimental: { generate: fixture.ctx.experimental.generate } }
+      expect(yield* review(oldHost, event, { ...options, mode, fallback })).toMatchObject({
+        decision: "escalate",
+        reason: expect.stringContaining("host update"),
+      })
+      const failed = {
+        ...fixture.ctx,
+        experimental: {
+          ...fixture.ctx.experimental,
+          session: { userMessages: () => Effect.fail("History unavailable") },
+        },
+      }
+      expect(Exit.isFailure(yield* review(failed, event, { ...options, mode, fallback }).pipe(Effect.exit))).toBe(true)
+    }
+    expect(fixture.prompts).toEqual([])
+    expect(fixture.decisions).toEqual([])
   }),
 )
 
@@ -245,7 +315,10 @@ it.effect("fallback never overrides denials, confident approvals, invalid answer
     expect(fixture.prompts).toEqual([])
     const ctx = {
       ...fixture.ctx,
-      experimental: { generate: { ...fixture.ctx.experimental.generate, decisions: () => Effect.fail("Unavailable") } },
+      experimental: {
+        ...fixture.ctx.experimental,
+        generate: { ...fixture.ctx.experimental.generate, decisions: () => Effect.fail("Unavailable") },
+      },
     }
     expect(
       Exit.isFailure(yield* review(ctx, event, { ...options, mode: "decision", fallback }).pipe(Effect.exit)),

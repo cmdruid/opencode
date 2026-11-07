@@ -285,6 +285,20 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
     },
     experimental: {
       permission: { reviewPending: permission.reviewPending },
+      session: {
+        userMessages: Effect.fn("PluginHost.session.userMessages")(function* (input) {
+          const session = yield* sessions.get(input.sessionID)
+          const messages = yield* sessions.messages({
+            sessionID: input.sessionID,
+            type: "user",
+            order: "asc",
+            ...(session.revert ? { cursor: { id: session.revert.messageID, direction: "previous" as const } } : {}),
+          })
+          return messages
+            .filter((message) => message.type === "user")
+            .map((message) => ({ id: message.id, text: message.text }))
+        }),
+      },
       terminal: {
         read: (input) => persistentPty.read(input.sessionID, input.lines),
       },

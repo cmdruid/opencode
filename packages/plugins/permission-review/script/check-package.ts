@@ -202,6 +202,38 @@ try {
   })
   assert.equal(permission.data.effect, "allow")
   assert.deepEqual(calls, ["/custom/v1/systemone", "/custom/v1/systemone"])
+  // A persisted user request must remain available after compaction, without an Allow Session example.
+  const exported = await request<{ data: { info: { id: string }; messages: unknown[] } }>(
+    `/api/experimental/session/${session.data.id}/export`,
+  )
+  const compacted = await request<{ data: { id: string } }>("/api/experimental/session/import", {
+    info: { ...exported.data.info, id: "ses_permission_compacted_fixture", title: "Compacted authorization fixture" },
+    messages: [
+      {
+        type: "user",
+        id: "msg_permission_original",
+        text: "Read README.md in this fixture project.",
+        time: { created: 1 },
+      },
+      { type: "user", id: "msg_permission_restriction", text: "Do not modify any files.", time: { created: 2 } },
+      {
+        type: "compaction",
+        id: "msg_permission_compaction",
+        status: "completed",
+        reason: "auto",
+        summary: "Assistant summary is not authorization.",
+        time: { created: 3 },
+      },
+    ],
+  })
+  const context = await request<{ data: { type: string }[] }>(`/api/session/${compacted.data.id}/context`)
+  assert.equal(context.data.filter((message) => message.type === "user").length, 0)
+  const restored = await request<{ data: { effect: string } }>(`/api/session/${compacted.data.id}/permission`, {
+    action: "read",
+    resources: ["README.md"],
+  })
+  assert.equal(restored.data.effect, "allow")
+  assert.equal(calls.length, 3)
   await run(
     [
       "tmux",
@@ -251,6 +283,7 @@ try {
     companionLoaded: true,
     customConnectionPersisted: true,
     queuedRequestApproved: queued.data.id,
+    compactedAuthorizationRestored: restored.data.effect === "allow",
     permission: permission.data,
     modelCalls: calls,
     limitation: "Requires this fork's experimental APIs; public plugin SDK alone is insufficient.",
