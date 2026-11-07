@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { ReviewResult } from "@opencode/plugin/permission"
 import type { PermissionReview } from "@opencode/plugin/permission"
 import { Clock, Effect, Option, Schema, Struct } from "effect"
-import { Options, type Assessment, type FallbackAssessment, type SessionApproval } from "./contract.js"
+import { Options, percent, type Assessment, type FallbackAssessment, type SessionApproval } from "./contract.js"
 
 export { Options } from "./contract.js"
 
@@ -119,16 +119,27 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
     confidence: answer.confidence,
     probabilities: answer.probabilities,
     threshold: options.minConfidence ?? 0.98,
+    approvalScore: answer.probabilities.find((item) => item.value === "approve")?.probability,
+    thresholdMetric: answer.choice === "approve" ? ("approval-score" as const) : ("confidence" as const),
   }
+  // Missing scores are invalid classifier output, not an ambiguous approval for chat to confirm.
+  if (answer.choice === "approve" && classifier.approvalScore === undefined)
+    return {
+      decision: "escalate",
+      reason: "Classifier did not return an approval score; please review the request.",
+      classifier,
+    }
+  const score = classifier.thresholdMetric === "approval-score" ? classifier.approvalScore! : classifier.confidence
+  const metric = classifier.thresholdMetric === "approval-score" ? "approval score" : "confidence"
   const parsed = Schema.decodeUnknownOption(ReviewResult)({
     decision: answer.choice,
-    reason: `Permission classifier selected ${answer.choice} (confidence ${answer.confidence}).`,
+    reason: `Permission classifier selected ${answer.choice} (${metric} ${percent(score)}).`,
   })
   const result =
-    classifier.confidence < classifier.threshold
+    score < classifier.threshold
       ? {
           decision: "escalate" as const,
-          reason: `Classifier proposed ${classifier.choice} (confidence ${classifier.confidence}, required ${classifier.threshold}); please review the request.`,
+          reason: `Classifier proposed ${classifier.choice} (${metric} ${percent(score)}, required ${percent(classifier.threshold)}); please review the request.`,
         }
       : Option.getOrElse(parsed, () => ({
           decision: "escalate" as const,
@@ -172,7 +183,7 @@ export const review = Effect.fn("PermissionReview.classify")(function* (
       })),
     ),
   )
-  // A second opinion can confirm a low-confidence approval, but disagreement never grants authority.
+  // A second opinion can confirm a below-threshold approval, but disagreement never grants authority.
   const applied =
     fallback.mode === "auto" &&
     classifier.choice === "approve" &&

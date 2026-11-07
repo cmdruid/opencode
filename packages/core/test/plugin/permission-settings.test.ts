@@ -137,7 +137,7 @@ it.live("a running review uses its starting threshold while the next request see
                     name: "permission",
                     choice: "approve",
                     confidence: 0.9,
-                    probabilities: [],
+                    probabilities: [{ value: "approve", probability: 0.9 }],
                   },
                 ],
               }

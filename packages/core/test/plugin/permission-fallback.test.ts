@@ -44,7 +44,7 @@ it.live("fallback settings persist per session, default to shadow, and preserve 
                     name: "permission",
                     choice: "approve",
                     confidence: 0.9,
-                    probabilities: [],
+                    probabilities: [{ value: "approve", probability: 0.9 }],
                   },
                 ],
               }

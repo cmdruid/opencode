@@ -4,6 +4,7 @@ import { TextAttributes, type BoxRenderable, type ScrollBoxRenderable, type Text
 import { SelectRow } from "../../tui/src/ui/select-row"
 import { useTerminalDimensions } from "@opentui/solid"
 import { createEffect, createSignal, For, Show, untrack } from "solid-js"
+import { percent } from "./contract.js"
 import type {
   Assessment,
   ConnectionRole,
@@ -363,12 +364,14 @@ export function PermissionSettings(props: {
         run: () => connection("classifier"),
       },
       {
-        title: "Confidence",
-        value: String(values().minConfidence),
-        detail: `${source("minConfidence")} · minimum confidence for classifier approval`,
+        title: "Minimum approval score",
+        value: percent(values().minConfidence),
+        detail: `${source("minConfidence")} · minimum approval score; provider confidence is separate`,
         run: () =>
-          edit("Confidence (0–1)", String(values().minConfidence), async (text) => {
-            await patch({ minConfidence: number(text) })
+          edit("Minimum approval score (0–100%)", percent(values().minConfidence), async (text) => {
+            const score = number(text.trim().replace(/%$/, ""))
+            if (score < 0 || score > 100) throw new Error("Enter a percentage from 0 to 100")
+            await patch({ minConfidence: score / 100 })
             back()
           }),
       },
@@ -956,14 +959,21 @@ export function describe(entry: Assessment) {
     ...(entry.classifier
       ? [
           `Raw choice: ${entry.classifier.choice}`,
-          `Confidence: ${entry.classifier.confidence}; threshold: ${entry.classifier.threshold}`,
-          `Choice scores: ${entry.classifier.probabilities.map((item) => `${item.value} ${item.probability}`).join(", ")}`,
+          ...(entry.classifier.thresholdMetric === "approval-score"
+            ? [
+                `Approval score: ${entry.classifier.approvalScore === undefined ? "missing" : percent(entry.classifier.approvalScore)}; minimum: ${percent(entry.classifier.threshold)}`,
+                `Provider confidence: ${percent(entry.classifier.confidence)}`,
+              ]
+            : [
+                `Confidence: ${percent(entry.classifier.confidence)}; threshold: ${percent(entry.classifier.threshold)}`,
+              ]),
+          `Choice scores: ${entry.classifier.probabilities.map((item) => `${item.value} ${percent(item.probability)}`).join(", ")}`,
         ]
       : []),
     ...(entry.fallback
       ? [
           `Reviewer: ${modelName(entry.fallback.model)} · ${entry.fallback.mode}`,
-          `${entry.fallback.trigger} · ${entry.fallback.status} · ${entry.fallback.durationMs} ms`,
+          `${entry.fallback.trigger === "low-confidence" && entry.classifier?.thresholdMetric === "approval-score" ? "Below minimum approval score" : entry.fallback.trigger} · ${entry.fallback.status} · ${entry.fallback.durationMs} ms`,
           `${entry.fallback.decision}: ${entry.fallback.reason}`,
           entry.fallback.applied ? "Used in reviewer decision" : "Did not change reviewer decision",
         ]

@@ -22,6 +22,22 @@ const options = {
   mode: "decision" as const,
   fallback: { model: Model.Ref.parse("review-source/chat#bounded"), mode: "auto" as const },
 }
+const responseFormat = {
+  type: "json_schema",
+  json_schema: {
+    name: "permission_review",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        decision: { type: "string", enum: ["approve", "deny", "escalate"] },
+        reason: { type: "string", minLength: 1 },
+      },
+      required: ["decision", "reason"],
+      additionalProperties: false,
+    },
+  },
+}
 const setup = Effect.gen(function* () {
   const plugins = yield* Plugin.Service
   const host = yield* PluginHost.make(plugins, "opencode.permission-review")
@@ -48,7 +64,7 @@ const setup = Effect.gen(function* () {
           variants: [
             {
               id: Model.VariantID.make("bounded"),
-              body: { reasoning_effort: "low", max_tokens: 1024 },
+              body: { reasoning_effort: "low", max_tokens: 1024, response_format: responseFormat },
               settings: { apiKey: "source-variant-key" },
               headers: { "x-api-key": "source-variant-header" },
             },
@@ -92,7 +108,7 @@ it.live("reviewer connections persist separately, isolate credentials, and resto
     expect(fallback.providerID).not.toBe(classifier.providerID)
     expect((yield* models.get(fallback.providerID, fallback.id))?.variants[0]).toEqual({
       id: Model.VariantID.make("bounded"),
-      body: { reasoning_effort: "low", max_tokens: 1024 },
+      body: { reasoning_effort: "low", max_tokens: 1024, response_format: responseFormat },
       headers: {},
     })
     const reopened = yield* connections(test.host, options)
@@ -118,7 +134,7 @@ it.live("reviewer connections persist separately, isolate credentials, and resto
   }),
 )
 
-it.live("custom chat endpoint uses its stored key and keeps the configured model variant", () =>
+it.live("custom chat endpoint uses its stored key and preserves schema-constrained review output", () =>
   Effect.gen(function* () {
     const requests: { path: string; auth: string | null; body: unknown }[] = []
     const server = yield* Effect.acquireRelease(
@@ -163,7 +179,7 @@ it.live("custom chat endpoint uses its stored key and keeps the configured model
       {
         path: "/v1/chat/completions",
         auth: "Bearer fixture-chat-key",
-        body: { model: "chat", max_tokens: 1024, reasoning_effort: "low" },
+        body: { model: "chat", max_tokens: 1024, reasoning_effort: "low", response_format: responseFormat },
       },
     ])
     yield* test.connection.set({ role: "fallback", url: `${server.url}v1`, apiKey: "" })

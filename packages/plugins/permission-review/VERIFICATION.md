@@ -150,3 +150,20 @@ Validation:
 - Production story inspection: `/tmp/perm-compact-preview-S2UACM`, including both three-row policy pages. Live installed-client preview: `/tmp/perm-compact-preview-CsAbvg`. The preview harness was corrected to distinguish the persistent story footer from the current page and to wait for full labels after resizing.
 
 Artifact SHA256: `5b174bcea1ef45c915296874135aecb7eb60477efea7bb20ae356a9abae034b5`. Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.4/node_modules/@cmdcode/opencode-auto-permissions`. Backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T00-51-32-097Z`. All prior effective settings and ten session selections matched after excluding newly exposed policy fields. New fields reflect the prior reviewer mode and default Both. Same host/endpoint; no live review, approval, restart or npm publication.
+
+## Approval scores, percentages and reviewer JSON — 2026-11-06
+
+Alpha.5 compares the classifier's approve probability with the inclusive cutoff. The observed 92.42% score passes 90% despite normalized confidence of 88.63%. A higher confidence cannot rescue a below-threshold approval score. Missing approve scores escalate without chat fallback; deny/escalate routing and agreement rules are unchanged. The legacy `minConfidence` storage field remains 0–1; the menu displays percentages and accepts `90` or `90%`. New history identifies its threshold metric and records provider confidence separately; old history retains its original interpretation.
+
+The selected Maple Gemma reviewer now uses a dedicated `permission-review` model variant with strict JSON Schema output. A fictional public-fetch prompt through the installed host's stateless generate endpoint returned bare JSON accepted by the production ReviewResult schema. No user context was replayed and no live permission request was approved by the verification. Strict rejection of fenced/prose responses remains. The README documents variant configuration for other installations; provider support is required. No host API or binary update.
+
+Validation:
+
+- Full plugin suite: 47 pass, 362 assertions. Focused Core connection/fallback/settings: 7 pass, 117 assertions.
+- Ten repetitions of changed plugin routing/component/app suites: 350 pass, 3,340 assertions. Core suites: 70 pass, 1,170 assertions.
+- Official plugin/Core TypeScript and root `bun run check` (36/36) pass.
+- Exact artifact with installed host: `/tmp/permission-package-check-oDo067/verification.json`; checks isolated installation, restart persistence, custom connection, queued approvals and bundled TUI.
+- Production story at 44/112 columns: `/tmp/perm-compact-preview-odtnj1`. The 44-column classifier menu displays the entire setting label and `90%`. Installed-client preview also passed at both widths: `/tmp/perm-compact-preview-56lBGk`.
+- Reviewer format verification: `/tmp/perm-json-reviewer-verification.json`. Configuration/settings backup: `~/.opencode/backups/before-json-reviewer-2026-11-07T01-43-50-654Z`.
+
+Artifact SHA256: `77d4059590bec0a7b2a45c61c6eba5d4f328d4d4a0355372f3dfe777e3a50206`. Installed at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.5/node_modules/@cmdcode/opencode-auto-permissions`. Installation backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T01-44-03-954Z`. Full effective settings and all ten session selections preserved during plugin replacement. Reviewer variant is the only deliberate settings change; cutoff stays 90%. Same host/endpoint; no restart or npm publication.

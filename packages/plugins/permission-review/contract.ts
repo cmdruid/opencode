@@ -158,6 +158,8 @@ export const Assessment = Schema.Struct({
       Schema.Struct({ value: Schema.Union([Schema.String, Schema.Boolean]), probability: Schema.Number }),
     ),
     threshold: Schema.Number,
+    approvalScore: Schema.Number.pipe(Schema.optional),
+    thresholdMetric: Schema.Literals(["approval-score", "confidence"]).pipe(Schema.optional),
   }).pipe(Schema.optional),
 })
 export type Assessment = typeof Assessment.Type
@@ -241,3 +243,7 @@ export const Contract = Rpc.define({
     },
   },
 })
+
+export function percent(value: number) {
+  return `${Number((value * 100).toFixed(2))}%`
+}

@@ -222,9 +222,11 @@ it.effect("shadow is the default fallback mode; classifier escalation cannot be 
 it.effect("fallback never overrides denials, confident approvals, invalid answers, errors or budget limits", () =>
   Effect.gen(function* () {
     for (const answer of [
-      { ...uncertain, confidence: 0.99 },
+      { ...uncertain, confidence: 0.99, probabilities: [{ value: "approve", probability: 0.99 }] },
       { ...uncertain, choice: "deny", confidence: 0.99 },
       { ...uncertain, choice: "deny", confidence: 0.1 },
+      { ...uncertain, probabilities: [] },
+      { ...uncertain, probabilities: [{ value: "deny", probability: 0.1 }] },
       { ...uncertain, choice: "always" },
       { ...uncertain, choice: true },
       { type: "error" as const, name: "permission", reason: "Provider error" },
@@ -367,29 +369,31 @@ it.effect("oversized evidence escalates without truncation or a model call", () 
   }),
 )
 
-it.effect("decision models use confidence only as a routing threshold", () =>
+it.effect("decision models use approval scores independently of normalized confidence", () =>
   Effect.gen(function* () {
-    for (const confidence of [0.99, 0.98, 0.4]) {
+    for (const score of [0.9242, 0.9, 0.89]) {
       const fixture = context("", [
         {
           type: "choice",
           name: "permission",
           choice: "approve",
-          confidence,
-          probabilities: [{ value: "approve", probability: confidence }],
+          confidence: score >= 0.9 ? 0.8863 : 0.99,
+          probabilities: [{ value: "approve", probability: score }],
         },
       ])
-      const result = yield* review(fixture.ctx, event, { ...options, mode: "decision" })
+      const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", minConfidence: 0.9 })
       expect(result).toMatchObject({
-        decision: confidence >= 0.98 ? "approve" : "escalate",
+        decision: score >= 0.9 ? "approve" : "escalate",
         classifier: {
           choice: "approve",
-          confidence,
-          probabilities: [{ value: "approve", probability: confidence }],
-          threshold: 0.98,
+          confidence: score >= 0.9 ? 0.8863 : 0.99,
+          probabilities: [{ value: "approve", probability: score }],
+          threshold: 0.9,
+          approvalScore: score,
+          thresholdMetric: "approval-score",
         },
       })
-      if (confidence < 0.98) expect(result.reason).toContain(`confidence ${confidence}, required 0.98`)
+      if (score < 0.9) expect(result.reason).toContain("approval score 89%, required 90%")
       expect(fixture.prompts).toEqual([])
       expect(fixture.decisions[0].questions[0]).toMatchObject({ type: "choice", name: "permission" })
       expect(fixture.decisions[0].input).toEqual([

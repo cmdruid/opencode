@@ -44,14 +44,14 @@ Full access requires confirmation with **Go back** selected initially. Scope and
 
 **Settings** has six sections:
 
-| Section        | Configuration                                                      | Scope                       |
-| -------------- | ------------------------------------------------------------------ | --------------------------- |
-| Classifier     | Provider, decision model/variant, connection, confidence threshold | All sessions on this server |
-| Reviewer       | Provider, chat model/variant, connection, timeout, removal         | All sessions on this server |
-| Session Policy | Automation Mode, Classifier Mode, Reviewer Mode                    | Current session             |
-| Global Policy  | Automation Mode, Classifier Mode, Reviewer Mode                    | All sessions on this server |
-| Review Rules   | Exact reviewed actions and additional instructions                 | All sessions on this server |
-| Activity       | Review history, remembered approvals, effective permissions        | Current session             |
+| Section        | Configuration                                                        | Scope                       |
+| -------------- | -------------------------------------------------------------------- | --------------------------- |
+| Classifier     | Provider, decision model/variant, connection, minimum approval score | All sessions on this server |
+| Reviewer       | Provider, chat model/variant, connection, timeout, removal           | All sessions on this server |
+| Session Policy | Automation Mode, Classifier Mode, Reviewer Mode                      | Current session             |
+| Global Policy  | Automation Mode, Classifier Mode, Reviewer Mode                      | All sessions on this server |
+| Review Rules   | Exact reviewed actions and additional instructions                   | All sessions on this server |
+| Activity       | Review history, remembered approvals, effective permissions          | Current session             |
 
 Menus use compact native OpenCode selection rows, right-aligned values and help for the selected row. There is no search/filter input. Arrows select, Enter opens, and PgUp/PgDn scroll. Home/End select the first/last row. Escape returns one level, preserving the parent selection and scroll position; at the permissions selector it closes. Editors use Ctrl+S to save and Escape to discard. Errors preserve the draft. Connections use one draft and an explicit **Save connection** action. History details return to history, and approval details/revocation return to the approvals list.
 
@@ -75,12 +75,14 @@ These remain the baseline under saved settings. Settings do not rewrite your con
 | `defaultMode`        | `manual`, `shadow`, or `auto`; when omitted, legacy `shadow: true` means shadow, otherwise auto |
 | `reviewerMode`       | `off`, `shadow`, or `auto`; defaults to the existing `fallback.mode` (or legacy chat mode)      |
 | `shadow`             | Legacy default selector; ignored when `defaultMode` is present                                  |
-| `minConfidence`      | `0.98`, inclusive range 0–1; shown only for classifiers                                         |
+| `minConfidence`      | `0.98` (98%); approval-score cutoff, inclusive range 0–1; edited as 0–100% in Classifier        |
 | `actions`            | Omitted means all exact permission action names; `[]` means none                                |
 | `policy`             | No additional instructions; supplements internal reviewer instructions                          |
 | `fallback.model`     | Optional chat model reference; omission disables the chat reviewer                              |
 | `fallback.mode`      | `shadow`; also `off` or `auto`                                                                  |
 | `fallback.timeoutMs` | `10000`, integer range 100–15000 ms                                                             |
+
+**Minimum approval score** compares the classifier's `approve` choice score against the cutoff, inclusively: a 92.42% approval score passes a 90% cutoff. Enter `90` or `90%` in the menu. Configuration and saved values retain the legacy `minConfidence` key and 0–1 representation (`0.90`). Provider-normalized confidence is recorded separately; it is not used to gate approvals. Denials and escalations retain their existing confidence routing. Missing approval scores require human review without chat fallback. Older history records retain their original confidence-threshold interpretation.
 
 The threshold routes decisions; it is not a calibrated probability of safety. Model choices and variants come from the host catalog and are validated on save. Token limits and other generation settings belong to model variants. The Classifier picker only offers decision models and saves `mode: "decision"`; the Reviewer picker only offers chat models. **Provider** chooses a provider and model together; **Model** goes directly to models from the selected provider. Cancelling either picker preserves the saved choice. **Global Policy → Automation Mode** chooses classifier-only, reviewer-only, or combined review. Reviewer-only uses the configured chat model without calling the classifier; its Off/Shadow/Automatic setting and timeout still apply. Classifier-only never calls the chat reviewer. Reviewer-only uses Reviewer Mode independently of the inactive classifier mode. Manual quick presets still require human decisions. In combined mode, classifier Manual/Shadow and the existing agreement rules remain in force. Legacy configuration-file `mode: "chat"` also supports reviewer-only operation with `model` as the chat model.
 
@@ -121,3 +123,33 @@ Run `bun run check:package <tarball> <compatible-opencode-binary>` for an isolat
 The package is excluded from host version rewriting and host publication collection. A future release requires verifying npm scope ownership/name availability, reviewing compatibility and verification evidence, and explicitly removing `private: true`. Prepared publication metadata selects public access and the `next` tag; no publication job is enabled.
 
 MIT; see LICENSE.
+
+### Reviewer JSON output
+
+The reviewer must return a bare JSON object with `decision` and `reason`. Markdown fences and prose remain invalid and require human review. For an OpenAI-compatible provider that supports JSON Schema output (including the tested Maple Gemma 4 31B endpoint), add this variant to the chat model's `variants` array in OpenCode configuration, then select it under **Reviewer → Model → gemma4-31b → permission-review** (using your own model name when different):
+
+```json
+{
+  "id": "permission-review",
+  "body": {
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "permission_review",
+        "strict": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "decision": { "type": "string", "enum": ["approve", "deny", "escalate"] },
+            "reason": { "type": "string", "minLength": 1 }
+          },
+          "required": ["decision", "reason"],
+          "additionalProperties": false
+        }
+      }
+    }
+  }
+}
+```
+
+For example, the resulting reviewer reference is `maple/gemma4-31b#permission-review`. This uses the host's existing variant support; no host update is required. Other providers may need their own output-format configuration. The plugin still validates every response and does not approve malformed output.

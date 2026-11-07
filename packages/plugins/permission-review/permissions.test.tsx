@@ -5,7 +5,7 @@ import { expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import { parseThemeDocument, resolveThemeDocument } from "@opencode/theme/tui"
 import themeSource from "../../tui/src/theme/assets/v2/opencode2.json"
-import { PermissionSettings } from "./settings-ui"
+import { describe, PermissionSettings } from "./settings-ui"
 import { selectPermissionRow } from "./navigation.fixture"
 import { settingsFixture } from "./settings.fixture"
 
@@ -180,13 +180,25 @@ test("numeric and policy controls bind to their server fields, including all ver
   await using f = await fixture()
   await f.open("Settings")
   await f.open("Classifier")
-  await f.open("Confidence")
+  await f.open("Minimum approval score")
   f.app.mockInput.pressKey("a", { ctrl: true })
   f.app.mockInput.pressKey("k", { ctrl: true })
-  await f.app.mockInput.typeText("2")
+  await f.app.mockInput.typeText("101")
   await f.submit()
   expect(f.data.fixture.writes).toHaveLength(0)
-  await f.back()
+  f.app.mockInput.pressKey("a", { ctrl: true })
+  f.app.mockInput.pressKey("k", { ctrl: true })
+  await f.app.mockInput.typeText("90%")
+  await f.submit()
+  expect(f.data.fixture.writes.at(-1)?.patch.minConfidence).toBe(0.9)
+  expect(f.app.captureCharFrame()).toContain("90%")
+  await f.open("Minimum approval score")
+  f.app.mockInput.pressKey("a", { ctrl: true })
+  f.app.mockInput.pressKey("k", { ctrl: true })
+  await f.app.mockInput.typeText("85")
+  await f.submit()
+  expect(f.data.fixture.writes.at(-1)?.patch.minConfidence).toBe(0.85)
+  expect(f.app.captureCharFrame()).toContain("85%")
   await f.back()
   await f.open("Reviewer")
   await f.open("Timeout (ms)")
@@ -299,7 +311,7 @@ test("mouse opens rows; long model lists scroll and return through providers", a
   expect(f.app.captureCharFrame()).toContain("classifier-19")
   f.app.mockInput.pressEnter()
   await f.ready()
-  expect(f.app.captureCharFrame()).toContain("Confidence")
+  expect(f.app.captureCharFrame()).toContain("Minimum approval score")
   expect(f.data.fixture.writes.at(-1)?.patch).toMatchObject({ mode: "decision", model: { id: "classifier-19" } })
 })
 
@@ -324,7 +336,7 @@ test.each([44, 112])(
     await f.open("Reset to Defaults")
     expect(f.data.snapshot().values.minConfidence).toBe(0.9)
     expect(f.data.snapshot().values.policy).toBe("Keep this policy")
-    expect(f.app.captureCharFrame()).toContain("Confidence")
+    expect(f.app.captureCharFrame()).toContain("Minimum approval score")
     await f.back()
     f.app.mockInput.pressKey("r", { ctrl: true })
     await f.ready()
@@ -396,4 +408,33 @@ test.each([44, 112])("session and global policies have the same three controls a
   await f.ready()
   await f.open("Reset to Defaults")
   expect(f.data.fixture.session?.reviewWith).toBe("both")
+})
+
+test("history distinguishes approval scores from confidence and retains legacy threshold meaning", () => {
+  const entry = Schema.decodeUnknownSync(Assessment)({
+    requestID: "per_score",
+    sessionID: "ses_score",
+    action: "webfetch",
+    model: { providerID: "fixture", id: "decision" },
+    mode: "decision",
+    shadow: false,
+    at: 1,
+    durationMs: 3,
+    decision: "approve",
+    reason: "Authorized public fetch",
+    classifier: {
+      choice: "approve",
+      confidence: 0.8863,
+      threshold: 0.9,
+      probabilities: [{ value: "approve", probability: 0.9242 }],
+      approvalScore: 0.9242,
+      thresholdMetric: "approval-score",
+    },
+  })
+  expect(describe(entry)).toContain("Approval score: 92.42%; minimum: 90%")
+  expect(describe(entry)).toContain("Provider confidence: 88.63%")
+  expect(describe(entry)).toContain("Choice scores: approve 92.42%")
+  expect(
+    describe({ ...entry, classifier: { ...entry.classifier!, thresholdMetric: undefined, approvalScore: undefined } }),
+  ).toContain("Confidence: 88.63%; threshold: 90%")
 })

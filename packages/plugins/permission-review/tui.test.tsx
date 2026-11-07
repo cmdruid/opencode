@@ -78,7 +78,7 @@ test.each([false, true])("home settings stay session-free and preset respects au
   await setup.ready
   await openPermissions(setup)
   await choose(setup, "Settings", "Permission settings")
-  await choose(setup, "Classifier", "Confidence")
+  await choose(setup, "Classifier", "Minimum approval score")
   expect(created).toEqual([])
   data.fixture.overrides = { minConfidence: 0.87 }
   setup.events.emit({
@@ -88,7 +88,7 @@ test.each([false, true])("home settings stay session-free and preset respects au
     location: { directory },
     data: {},
   })
-  await setup.waitForFrame((frame) => frame.includes("0.87"))
+  await setup.waitForFrame((frame) => frame.includes("87%"))
   setup.mockInput.pressEscape()
   await setup.waitForFrame((frame) => frame.includes("Permission settings"))
   setup.mockInput.pressEscape()
