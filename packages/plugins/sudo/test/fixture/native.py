@@ -143,8 +143,18 @@ os.execv(args[0], args)
             if phase < 4 and (temporary / "cleanup").exists():
                 assert b"APP_RESUMED" not in transcript
                 assert not (temporary / "release.json").exists()
-                os.write(terminal, b"DUMMY_NATIVE_AUTH_TAIL\n\x1b[A\x1b[200~DUMMY_NATIVE_AUTH_TAIL\nsecond-line\x1b[201~")
                 if scenario == "loaded" and not (temporary / "closed-observed").exists(): continue
+                tail = b"DUMMY_NATIVE_AUTH_TAIL\n\x1b[A\x1b[200~DUMMY_NATIVE_AUTH_TAIL\nsecond-line\x1b[201~\n"
+                os.write(terminal, tail)
+                # A PTY master write can still be in transit. Test flushing queued
+                # input, not input that arrives after the native cleanup barrier.
+                slave = os.open(f"/proc/{pid}/fd/0", os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                try:
+                    while struct.unpack("I", fcntl.ioctl(slave, termios.FIONREAD, struct.pack("I", 0)))[0] < len(tail):
+                        assert time.monotonic() < deadline, "trailing input did not reach the terminal"
+                        time.sleep(.001)
+                finally:
+                    os.close(slave)
                 if scenario == "success": os.kill(native_group, signal.SIGTERM)
                 (temporary / "cleanup.release").touch()
                 phase = 4
