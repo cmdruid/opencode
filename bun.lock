@@ -577,7 +577,7 @@
     },
     "packages/plugins/permission-review": {
       "name": "@cmdcode/opencode-auto-permissions",
-      "version": "0.1.0-alpha.7",
+      "version": "0.1.0-alpha.8",
       "devDependencies": {
         "@opencode/core": "workspace:*",
         "@opencode/theme": "workspace:*",

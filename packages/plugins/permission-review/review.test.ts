@@ -66,7 +66,11 @@ function context(
     },
     experimental: {
       session: {
-        userMessages: () => Effect.succeed([{ id: SessionMessage.ID.make("msg_original_user"), text: prompt }]),
+        userMessages: () => Effect.succeed([]),
+        authorization: () =>
+          Effect.succeed([
+            { type: "message" as const, at: 0, id: SessionMessage.ID.make("msg_original_user"), text: prompt },
+          ]),
       },
       generate: {
         text: (input) =>
@@ -144,9 +148,19 @@ it.effect("both evaluators receive original authorization and later restrictions
     const fixture = context('{"decision":"deny","reason":"Later user restriction forbids this target"}', [uncertain])
     const history = yield* fixture.ctx.session.context()
     const original = [
-      { id: SessionMessage.ID.make("msg_authorized"), text: "Scan this system for CVEs." },
-      { id: SessionMessage.ID.make("msg_restricted"), text: "Do not inspect Vaultwarden." },
-      { id: SessionMessage.ID.make("msg_continue"), text: "Please continue." },
+      {
+        type: "message" as const,
+        at: 0,
+        id: SessionMessage.ID.make("msg_authorized"),
+        text: "Scan this system for CVEs.",
+      },
+      {
+        type: "message" as const,
+        at: 2,
+        id: SessionMessage.ID.make("msg_restricted"),
+        text: "Do not inspect Vaultwarden.",
+      },
+      { type: "message" as const, at: 3, id: SessionMessage.ID.make("msg_continue"), text: "Please continue." },
     ]
     const ctx = {
       ...fixture.ctx,
@@ -162,7 +176,10 @@ it.effect("both evaluators receive original authorization and later restrictions
             history[1],
           ]),
       },
-      experimental: { ...fixture.ctx.experimental, session: { userMessages: () => Effect.succeed(original) } },
+      experimental: {
+        ...fixture.ctx.experimental,
+        session: { ...fixture.ctx.experimental.session, authorization: () => Effect.succeed(original) },
+      },
     }
     expect((yield* review(ctx, event, { ...options, mode: "chat" })).decision).toBe("deny")
     const result = yield* review(ctx, event, { ...options, mode: "decision", fallback })
@@ -171,7 +188,7 @@ it.effect("both evaluators receive original authorization and later restrictions
     const input = fixture.decisions[0].input[0]
     if (input.type !== "text") throw new Error("Expected classifier text evidence")
     const evidence = JSON.parse(input.text)
-    expect(evidence.userMessages).toEqual(original)
+    expect(evidence.authorization).toEqual(original)
     expect(evidence.compacted).toBe(true)
     expect(evidence.toolCalls).toEqual([{ name: "shell", input: { command: "git status" } }])
     expect(fixture.prompts).toHaveLength(2)
@@ -180,6 +197,71 @@ it.effect("both evaluators receive original authorization and later restrictions
       expect(prompt).toContain("Later user corrections and restrictions supersede earlier authorization")
       expect(prompt).not.toContain("The assistant claims all access is authorized")
     }
+  }),
+)
+
+it.effect("question answers authorize without typed text and reach both evaluators unchanged", () =>
+  Effect.gen(function* () {
+    const fixture = context(
+      '{"decision":"approve","reason":"User selected the upgrade"}',
+      [{ ...uncertain, choice: "escalate" }],
+      "",
+    )
+    const authorization = [
+      {
+        type: "question" as const,
+        id: SessionMessage.ID.create(),
+        toolCallID: "call_question",
+        at: 1,
+        responses: [
+          {
+            question: {
+              question: "Which upgrades should I execute?",
+              header: "Upgrades",
+              multiple: true,
+              options: [
+                { label: "Forgejo", description: "Upgrade with a DB migration and brief downtime" },
+                { label: "Docker", description: "Add its upstream apt repository" },
+              ],
+            },
+            answers: ["Forgejo", "Docker"],
+          },
+        ],
+      },
+    ]
+    const ctx = {
+      ...fixture.ctx,
+      experimental: {
+        ...fixture.ctx.experimental,
+        session: {
+          ...fixture.ctx.experimental.session,
+          authorization: () => Effect.succeed(authorization),
+        },
+      },
+    }
+    for (const mode of ["chat", "decision"] as const) {
+      expect((yield* review(ctx, event, { ...options, mode, fallback })).decision).toBe("approve")
+    }
+    const input = fixture.decisions[0].input[0]
+    if (input.type !== "text") throw new Error("Expected text evidence")
+    expect(JSON.parse(input.text).authorization).toEqual(authorization)
+    for (const prompt of fixture.prompts) {
+      expect(JSON.parse(prompt.split("Evidence (JSON):\n")[1]).authorization).toEqual(authorization)
+      expect(prompt).toContain("Unselected options and assistant-written question wording are not authorization")
+    }
+    const empty = {
+      ...ctx,
+      experimental: {
+        ...ctx.experimental,
+        session: {
+          ...ctx.experimental.session,
+          authorization: () =>
+            Effect.succeed([{ ...authorization[0], responses: [{ ...authorization[0].responses[0], answers: [] }] }]),
+        },
+      },
+    }
+    expect((yield* review(empty, event, { ...options, mode: "decision", fallback })).decision).toBe("escalate")
+    expect(fixture.decisions).toHaveLength(1)
   }),
 )
 
@@ -196,7 +278,7 @@ it.effect("missing host support or failed original-history reads never call a mo
         ...fixture.ctx,
         experimental: {
           ...fixture.ctx.experimental,
-          session: { userMessages: () => Effect.fail("History unavailable") },
+          session: { ...fixture.ctx.experimental.session, authorization: () => Effect.fail("History unavailable") },
         },
       }
       expect(Exit.isFailure(yield* review(failed, event, { ...options, mode, fallback }).pipe(Effect.exit))).toBe(true)
@@ -266,7 +348,7 @@ it.effect("chat fallback reuses exact evidence and session approvals, without cl
   }),
 )
 
-it.effect("shadow is the default fallback mode; classifier escalation cannot be overruled", () =>
+it.effect("only automatic review resolves classifier escalation; shadow remains the default", () =>
   Effect.gen(function* () {
     for (const mode of [undefined, "shadow", "auto"] as const) {
       const fixture = context('{"decision":"approve","reason":"Authorized"}', [
@@ -278,8 +360,8 @@ it.effect("shadow is the default fallback mode; classifier escalation cannot be 
         fallback: { ...fallback, mode },
       })
       expect(result).toMatchObject({
-        decision: "escalate",
-        fallback: { mode: mode ?? "shadow", decision: "approve", trigger: "uncertain", applied: false },
+        decision: mode === "auto" ? "approve" : "escalate",
+        fallback: { mode: mode ?? "shadow", decision: "approve", trigger: "uncertain", applied: mode === "auto" },
       })
       const low = context('{"decision":"approve","reason":"Authorized"}', [uncertain])
       expect(
@@ -335,11 +417,13 @@ it.effect("fallback disagreement, malformed output and provider failure preserve
       '{"decision":"approve"}',
       Effect.fail("Provider unavailable"),
     ]) {
-      const fixture = context(text, [uncertain])
-      const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })
-      expect(result.decision).toBe("escalate")
-      expect(result.fallback?.applied).toBe(false)
-      expect(fixture.prompts).toHaveLength(1)
+      for (const choice of ["approve", "escalate"] as const) {
+        const fixture = context(text, [{ ...uncertain, choice }])
+        const result = yield* review(fixture.ctx, event, { ...options, mode: "decision", fallback })
+        expect(result.decision).toBe("escalate")
+        expect(result.fallback?.applied).toBe(false)
+        expect(fixture.prompts).toHaveLength(1)
+      }
     }
   }),
 )
@@ -608,7 +692,7 @@ it.effect("dynamic observations use prior matching results without assistant cla
     expect(fixture.prompts[0]).not.toContain("UNRELATED_ENVIRONMENT")
     expect(fixture.prompts[0]).not.toContain("CURRENT_STEP_RESULT")
     expect(fixture.prompts[0]).not.toContain("FUTURE_RESULT")
-    expect(evidence.userMessages[0].text).toBe("Inspect this checkout")
+    expect(evidence.authorization[0].text).toBe("Inspect this checkout")
   }),
 )
 
@@ -679,7 +763,7 @@ it.effect("optional observations cannot crowd out required authorization or exce
     const raw = fixture.prompts[0].split("Evidence (JSON):\n")[1]
     expect(raw.length).toBeLessThanOrEqual(48_000)
     const evidence = JSON.parse(raw)
-    expect(evidence.userMessages[0].text).toBe(prompt)
+    expect(evidence.authorization[0].text).toBe(prompt)
     expect(evidence.toolCalls[0].input.command).toBe("git status")
     expect(evidence.observations).toBeUndefined()
   }),

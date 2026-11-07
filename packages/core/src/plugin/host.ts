@@ -20,6 +20,7 @@ import { Location } from "../location.js"
 import { LocationServiceMap } from "../location-service-map.js"
 import { Model } from "../model.js"
 import { Mcp } from "../mcp/index.js"
+import { SessionStore } from "../session/store.js"
 import { Session } from "../session.js"
 import { InstructionEntry } from "../session/instruction-entry.js"
 import { PersistentPty } from "../persistent-pty.js"
@@ -74,6 +75,7 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
   const permission = yield* Permission.Service
   const hooks = yield* PluginHooks.Service
   const sessions = yield* Session.Service
+  const sessionStore = yield* SessionStore.Service
   const instructionEntries = yield* InstructionEntry.Service
   const persistentPty = yield* PersistentPty.Service
   const locations = yield* LocationServiceMap.Service
@@ -286,6 +288,10 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: Pick<Interfa
     experimental: {
       permission: { reviewPending: permission.reviewPending },
       session: {
+        authorization: Effect.fn("PluginHost.session.authorization")(function* (input) {
+          const session = yield* sessions.get(input.sessionID)
+          return yield* sessionStore.authorization({ ...input, before: session.revert?.messageID })
+        }),
         userMessages: Effect.fn("PluginHost.session.userMessages")(function* (input) {
           const session = yield* sessions.get(input.sessionID)
           const messages = yield* sessions.messages({
@@ -670,6 +676,7 @@ export const requirements = LayerNode.group([
   Permission.node,
   PluginHooks.node,
   Session.node,
+  SessionStore.node,
   InstructionEntry.node,
   PersistentPty.node,
   LocationServiceMap.node,

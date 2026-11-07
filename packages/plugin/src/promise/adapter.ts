@@ -342,7 +342,10 @@ export function fromPromise(plugin: Plugin) {
           },
           experimental: {
             permission: { reviewPending: (input) => run(host.experimental.permission.reviewPending(input)) },
-            session: { userMessages: (input) => run(host.experimental.session.userMessages(input)) },
+            session: {
+              userMessages: (input) => run(host.experimental.session.userMessages(input)),
+              authorization: (input) => run(host.experimental.session.authorization(input)),
+            },
             terminal: {
               read: adaptApiMethod(ExperimentalEndpoints["persistentPty.read"], host.experimental.terminal.read),
             },

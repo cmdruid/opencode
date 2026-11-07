@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, mkdir, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import type { ServerSettings } from "../contract"
+import type { Assessment, ServerSettings } from "../contract"
 
 const tarball = path.resolve(process.argv[2] ?? "")
 const binary = path.resolve(process.argv[3] ?? "")
@@ -55,19 +55,45 @@ assert.equal(manifest.scripts, undefined)
 assert.deepEqual(manifest.exports, { ".": "./index.ts", "./server": "./index.ts", "./tui": "./tui.js" })
 for (const file of Object.values(manifest.exports)) assert(await Bun.file(path.join(installed, String(file))).exists())
 const calls: string[] = []
+const bodies: string[] = []
+let classifierChoice: "approve" | "escalate" = "approve"
 const model = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
   async fetch(request) {
     calls.push(new URL(request.url).pathname)
-    await request.json()
+    const body = await request.json()
+    bodies.push(JSON.stringify(body))
+    if (new URL(request.url).pathname.endsWith("/chat/completions")) {
+      const content = JSON.stringify({
+        decision: "approve",
+        reason: "The recorded dialog answer authorizes this read.",
+      })
+      if (body.stream)
+        return new Response(
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        )
+      return Response.json({
+        id: "fixture",
+        object: "chat.completion",
+        created: 0,
+        model: "reviewer",
+        choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      })
+    }
     return Response.json({
       model: "decision",
       answers: {
         permission: {
           type: "choice",
-          choice: "approve",
-          probabilities: { approve: 1, deny: 0, escalate: 0 },
+          choice: classifierChoice,
+          probabilities: {
+            approve: classifierChoice === "approve" ? 1 : 0,
+            deny: 0,
+            escalate: classifierChoice === "escalate" ? 1 : 0,
+          },
           confidence: 1,
         },
       },
@@ -97,6 +123,11 @@ await Bun.write(
       update: "disable",
       permissions: [{ action: "*", resource: "*", effect: "ask" }],
       providers: {
+        chatfixture: {
+          package: "@opencode/ai/providers/openai-compatible",
+          settings: { baseURL: `${model.url}v1`, apiKey: false },
+          models: { reviewer: { type: "chat" } },
+        },
         fixture: {
           package: "@opencode/ai/providers/typesafe-ai/decisions",
           settings: { baseURL: `${model.url}v1`, apiKey: false },
@@ -234,6 +265,76 @@ try {
   })
   assert.equal(restored.data.effect, "allow")
   assert.equal(calls.length, 3)
+  // Only a completed dialog authorizes this request; the classifier delegates to the chat reviewer.
+  const questions = [
+    {
+      question: "Read README.md now?",
+      header: "Read",
+      options: [
+        { label: "Yes", description: "Read only this local file" },
+        { label: "No", description: "Do nothing" },
+      ],
+    },
+  ]
+  const answered = await request<{ data: { id: string } }>("/api/experimental/session/import", {
+    info: { ...exported.data.info, id: "ses_permission_question_fixture", title: "Question authorization fixture" },
+    messages: [
+      {
+        type: "assistant",
+        id: "msg_permission_question",
+        agent: "build",
+        model: { providerID: "chatfixture", id: "reviewer" },
+        time: { created: 1, completed: 2 },
+        content: [
+          {
+            type: "tool",
+            id: "call_permission_question",
+            name: "question",
+            executed: false,
+            time: { created: 1, completed: 2 },
+            state: {
+              status: "completed",
+              input: { questions },
+              metadata: { answers: [["Yes"]] },
+              content: [{ type: "text", text: "Untrusted rendering; read structured metadata instead." }],
+            },
+          },
+        ],
+      },
+      {
+        type: "compaction",
+        id: "msg_permission_question_compaction",
+        status: "completed",
+        reason: "auto",
+        summary: "Question no longer in active context.",
+        time: { created: 3 },
+      },
+    ],
+  })
+  await rpc("saveSettings", {
+    patch: {
+      reviewWith: "both",
+      reviewerMode: "auto",
+      fallback: { model: { providerID: "chatfixture", id: "reviewer" }, mode: "auto", timeoutMs: 10000 },
+    },
+  })
+  classifierChoice = "escalate"
+  const delegated = await request<{ data: { effect: string } }>(`/api/session/${answered.data.id}/permission`, {
+    action: "read",
+    resources: ["README.md"],
+  })
+  assert.equal(delegated.data.effect, "allow")
+  assert.deepEqual(calls.slice(3), ["/custom/v1/systemone", "/v1/chat/completions"])
+  assert.equal(
+    bodies.slice(3).every((body) => body.includes("call_permission_question")),
+    true,
+  )
+  const reviews = await rpc<Assessment[]>("history", { sessionID: answered.data.id })
+  assert(
+    reviews.some(
+      (review) => review.classifier?.choice === "escalate" && review.fallback?.applied && review.decision === "approve",
+    ),
+  )
   await run(
     [
       "tmux",
@@ -283,6 +384,8 @@ try {
     companionLoaded: true,
     customConnectionPersisted: true,
     queuedRequestApproved: queued.data.id,
+    questionAuthorizationRestored: delegated.data.effect === "allow",
+    classifierEscalationResolved: true,
     compactedAuthorizationRestored: restored.data.effect === "allow",
     permission: permission.data,
     modelCalls: calls,

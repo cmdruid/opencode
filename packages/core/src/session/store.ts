@@ -1,7 +1,7 @@
 export * as SessionStore from "./store.js"
 
 import { and, asc, desc, eq, gt, isNotNull, isNull, like, lt, notInArray, or, sql, type SQL } from "drizzle-orm"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { Project } from "@opencode/schema/project"
 import { Workspace } from "@opencode/schema/workspace"
 import { AbsolutePath, PositiveInt, RelativePath } from "@opencode/schema/schema"
@@ -11,7 +11,9 @@ import { SessionHistory } from "./history.js"
 import { MessageDecodeError } from "./error.js"
 import { SessionMessage } from "./message.js"
 import { Session } from "@opencode/schema/session"
-import { SessionMessageTable, SessionTable } from "./sql.js"
+import { SessionMessageTable, SessionPartTable, SessionTable } from "./sql.js"
+import { Question } from "@opencode/schema/question"
+import type { SessionAuthorization } from "@opencode/schema/session-authorization"
 import { fromRow } from "./info.js"
 
 const ListInputBase = {
@@ -51,7 +53,20 @@ export type MessagesInput = {
   }
 }
 
+const QuestionReply = Schema.Struct({
+  id: Schema.String,
+  state: Schema.Struct({
+    input: Schema.Struct({ questions: Schema.Array(Question.Prompt).check(Schema.isMinLength(1)) }),
+    metadata: Schema.Struct({ answers: Schema.Array(Question.Answer) }),
+  }),
+  time: Schema.Struct({ completed: Schema.Finite }),
+})
+
 export interface Interface {
+  readonly authorization: (input: {
+    sessionID: Session.ID
+    before?: SessionMessage.ID
+  }) => Effect.Effect<ReadonlyArray<SessionAuthorization.Entry>>
   readonly get: (sessionID: Session.ID) => Effect.Effect<Session.Info | undefined>
   readonly list: (input?: ListInput) => Effect.Effect<Session.Info[]>
   readonly messages: (input: MessagesInput) => Effect.Effect<SessionMessage.Info[], MessageDecodeError>
@@ -184,6 +199,92 @@ const layer = Layer.effect(
           Effect.orDie,
         )
         return (direction === "previous" ? rows.toReversed() : rows).map((row) => fromRow(row))
+      }),
+      authorization: Effect.fn("SessionStore.authorization")(function* (input) {
+        const boundary = input.before
+          ? lt(
+              SessionMessageTable.seq,
+              db
+                .select({ seq: SessionMessageTable.seq })
+                .from(SessionMessageTable)
+                .where(
+                  and(eq(SessionMessageTable.session_id, input.sessionID), eq(SessionMessageTable.id, input.before)),
+                ),
+            )
+          : undefined
+        // Read only text and question parts; never hydrate historical tool output or media blobs.
+        const messages = yield* db
+          .select({
+            id: SessionMessageTable.id,
+            at: SessionMessageTable.time_created,
+            text: sql<string>`json_extract(${SessionMessageTable.data}, '$.text')`,
+          })
+          .from(SessionMessageTable)
+          .where(
+            and(eq(SessionMessageTable.session_id, input.sessionID), eq(SessionMessageTable.type, "user"), boundary),
+          )
+          .orderBy(asc(SessionMessageTable.seq))
+          .all()
+          .pipe(Effect.orDie)
+        const parts = yield* db
+          .select({ id: SessionPartTable.message_id, data: SessionPartTable.data })
+          .from(SessionPartTable)
+          .innerJoin(SessionMessageTable, eq(SessionMessageTable.id, SessionPartTable.message_id))
+          .where(
+            and(
+              eq(SessionPartTable.session_id, input.sessionID),
+              boundary,
+              eq(SessionPartTable.type, "tool"),
+              sql`json_extract(${SessionPartTable.data}, '$.name') = 'question'`,
+              sql`json_extract(${SessionPartTable.data}, '$.state.status') = 'completed'`,
+              sql`coalesce(json_extract(${SessionPartTable.data}, '$.executed'), 0) = 0`,
+            ),
+          )
+          .orderBy(asc(SessionMessageTable.seq), asc(SessionPartTable.ordinal))
+          .all()
+          .pipe(Effect.orDie)
+        // Older/default hosts store assistant parts inline; read both supported storage layouts.
+        const inline = yield* db
+          .select({
+            id: SessionMessageTable.id,
+            data: sql`part.value`.mapWith(SessionPartTable.data),
+          })
+          .from(SessionMessageTable)
+          .innerJoin(sql`json_each(${SessionMessageTable.data}, '$.content') as part`, sql`true`)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, input.sessionID),
+              eq(SessionMessageTable.type, "assistant"),
+              boundary,
+              sql`json_extract(part.value, '$.type') = 'tool'`,
+              sql`json_extract(part.value, '$.name') = 'question'`,
+              sql`json_extract(part.value, '$.state.status') = 'completed'`,
+              sql`coalesce(json_extract(part.value, '$.executed'), 0) = 0`,
+            ),
+          )
+          .orderBy(asc(SessionMessageTable.seq), sql`part.key`)
+          .all()
+          .pipe(Effect.orDie)
+        const answers = [...parts, ...inline].flatMap<SessionAuthorization.Entry>((part) => {
+          const reply = Schema.decodeUnknownOption(QuestionReply)(part.data)
+          if (Option.isNone(reply)) return []
+          const questions = reply.value.state.input.questions
+          const answers = reply.value.state.metadata.answers
+          if (questions.length !== answers.length) return []
+          return [
+            {
+              type: "question",
+              id: part.id,
+              toolCallID: reply.value.id,
+              at: reply.value.time.completed,
+              responses: questions.map((question, index) => ({ question, answers: answers[index] })),
+            },
+          ]
+        })
+        // An answer can arrive after a later user message while its assistant step is still open.
+        return [...messages.map((message) => ({ type: "message" as const, ...message })), ...answers].sort(
+          (a, b) => a.at - b.at,
+        )
       }),
       messages: Effect.fn("SessionStore.messages")(function* (input) {
         return yield* SessionHistory.decodeMessageRows(db, yield* messageRows(input))

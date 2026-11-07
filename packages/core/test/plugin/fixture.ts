@@ -27,6 +27,7 @@ import { Npm } from "@opencode/util/npm"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { Provider } from "@opencode/core/provider"
+import { SessionStore } from "@opencode/core/session/store"
 import { Session } from "@opencode/core/session"
 import { SessionInbox } from "@opencode/core/session/inbox"
 import { SharedCache } from "@opencode/core/shared-cache"
@@ -134,6 +135,7 @@ export const makePluginTestLayer = (
       KV.node,
       Mcp.node,
       Session.node,
+      SessionStore.node,
       SharedCache.node,
       InstructionEntry.node,
       PersistentPty.node,

@@ -70,7 +70,10 @@ export function host(overrides: Overrides = {}): Plugin.Context {
     event: { subscribe: events(overrides.event?.subscribe ?? (() => Stream.empty)) },
     experimental: overrides.experimental ?? {
       permission: { reviewPending: () => Effect.die("unused experimental.permission.reviewPending") },
-      session: { userMessages: () => Effect.die("unused experimental.session.userMessages") },
+      session: {
+        userMessages: () => Effect.die("unused experimental.session.userMessages"),
+        authorization: () => Effect.die("unused experimental.session.authorization"),
+      },
       terminal: {
         read: () => Effect.die("unused experimental.terminal.read"),
       },

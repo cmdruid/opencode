@@ -6,6 +6,7 @@ import type { PromptInput } from "@opencode/schema/prompt-input"
 import type { Session } from "@opencode/schema/session"
 import type { SessionInbox } from "@opencode/schema/session-inbox"
 import type { SessionError } from "@opencode/schema/session-error"
+import type { SessionAuthorization } from "@opencode/schema/session-authorization"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { TokenUsage } from "@opencode/schema/token-usage"
 import type { Effect, JsonSchema, Types } from "effect"
@@ -222,6 +223,16 @@ export type SessionDomain = Pick<
 
 /** Experimental: original user text, independent of compaction. */
 export interface ExperimentalSessionDomain {
+  /**
+   * Reads delivered user text and completed native question replies, ordered by user-message / answer time.
+   * Excludes queued input, reverted exchanges, cancelled questions, provider-executed tools and synthetic text.
+   * Independent of compaction; no parent-session history is added. Question wording is context, not consent.
+   * Experimental: may change without compatibility guarantees.
+   */
+  readonly authorization: (input: {
+    readonly sessionID: Session.ID
+  }) => Effect.Effect<ReadonlyArray<SessionAuthorization.Entry>, unknown>
+
   /**
    * Reads delivered user messages in chronological order from this session's persisted history.
    * Excludes messages at/after a staged revert, queued input, summaries and synthetic messages.
