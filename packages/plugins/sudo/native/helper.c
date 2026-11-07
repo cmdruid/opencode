@@ -184,13 +184,14 @@ static int supervise(const char *socket_path, const char *id) {
     _exit(127);
   }
   int started = 0;
-  int64_t deadline = milliseconds() + 300000;
+  // Waiting for the user does not spend the command's execution allowance.
+  int64_t deadline = 0;
   int cancelled = 0;
   for (;;) {
     struct pollfd running[] = {{output, POLLIN, 0}, {connection, POLLIN, 0}};
     (void)poll(running, 2, 20);
     if (resized) { resized = 0; screen_resize(tty, &screen); }
-    if ((interrupted || running[1].revents || milliseconds() >= deadline) && !cancelled) {
+    if ((interrupted || running[1].revents || (started && milliseconds() >= deadline)) && !cancelled) {
       cancelled = 1;
       timed_out = started && milliseconds() >= deadline;
       kill(child, SIGTERM);

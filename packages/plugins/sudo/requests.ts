@@ -27,12 +27,10 @@ export function createRequests() {
         state.output = state.output.slice(-65536)
       }
       const cancel = () => finish()
-      const timer = setTimeout(cancel, Math.min(2147483647, 300_000 + timeout))
       const finish = (value?: Result) => {
         if (state.done) return
         state.done = true
         pending.delete(info.id)
-        clearTimeout(timer)
         signal.removeEventListener("abort", cancel)
         connections.forEach((connection) => connection.destroy())
         server.close()

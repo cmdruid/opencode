@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, jest, test } from "bun:test"
 import { connect } from "node:net"
 import { once } from "node:events"
 import { stat } from "node:fs/promises"
@@ -14,6 +14,34 @@ const info = {
   host: "server",
   user: "owner",
 }
+
+unixTest("approval and claimed handoffs stay pending until the user responds", async () => {
+  jest.useFakeTimers()
+  const requests = createRequests()
+  const pending = await requests.ask(info, 1000, new AbortController().signal)
+  try {
+    jest.advanceTimersByTime(24 * 60 * 60 * 1000)
+    expect(requests.list("session")).toEqual([pending.request])
+    const native = connect(pending.request.socket)
+    const data = once(native, "data")
+    native.write(info.id)
+    const [metadata] = await data
+    expect(metadata.readUInt32BE(metadata.length - 4)).toBe(1000)
+    jest.advanceTimersByTime(24 * 60 * 60 * 1000)
+    expect(requests.list("session")).toEqual([pending.request])
+    expect(native.destroyed).toBe(false)
+    const result = Buffer.alloc(13)
+    result[0] = 88
+    result.writeUInt32BE(8, 1)
+    native.write(result)
+    expect(await pending.result).toEqual({ output: "", exit: 0, timedOut: false, truncated: false })
+    expect(requests.list("session")).toEqual([])
+  } finally {
+    requests.close()
+    jest.useRealTimers()
+    await pending.result
+  }
+})
 
 unixTest("private socket claims once and carries only command metadata and output", async () => {
   const requests = createRequests()

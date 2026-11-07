@@ -54,6 +54,11 @@ os.execv(args[0], args)
         "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-DOPENCODE_SUDO_TEST",
         '-DSUDO_PATH="' + str(fake) + '"',
         str(package / "native/helper.c"), "-o", str(helper),
+        *([
+            str(package / "test/fixture/clock.c"),
+            '-DTEST_CLOCK_PATH="' + str(temporary / "clock") + '"',
+            "-Wl,--wrap=clock_gettime", "-Wl,--wrap=poll",
+        ] if scenario == "long-auth" else []),
     ], check=True)
     pid, terminal = pty.fork()
     if pid == 0:
@@ -94,6 +99,9 @@ os.execv(args[0], args)
                 os.write(terminal, b"DUMMY_NATIVE_AUTH_PASSWORD\r")
                 phase = 3
             if phase == 2 and b"FAKE_AUTH_READY:" in transcript:
+                if scenario == "long-auth":
+                    (temporary / "clock").touch()
+                    if not (temporary / "clock.observed").exists(): continue
                 if scenario == "resize":
                     fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 16, 40, 0, 0))
                     os.killpg(native_group, signal.SIGWINCH)
@@ -154,9 +162,10 @@ os.execv(args[0], args)
             assert secret not in log, "secret leaked into renderer input log"
         assert b"DUMMY_NATIVE_AUTH_TAIL" not in transcript, "guard echoed trailing input"
         result = json.loads(output)
-        if scenario in ("success", "nopasswd", "diagnostics", "suspend", "crash", "slow-auth", "replace", "unlink", "resize", "escape-tail", "retry"):
+        if scenario in ("success", "nopasswd", "diagnostics", "suspend", "crash", "slow-auth", "long-auth", "replace", "unlink", "resize", "escape-tail", "retry"):
             assert result["output"] == "command-output\n", result
             assert result["exit"] == 0, result
+            assert not result["timedOut"], result
         if scenario == "failure":
             assert result["exit"] == 1 and result["output"] == "", result
         if scenario in ("timeout", "flood"):

@@ -27,7 +27,8 @@ export default Plugin.define({
             timeout: Schema.optionalKey(
               Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(2147483647)),
             ).annotate({
-              description: "Command timeout in milliseconds, excluding native sudo authentication. Default: 120000.",
+              description:
+                "Command timeout in milliseconds, excluding user approval and sudo authentication. Default: 120000.",
             }),
           }),
         ),
@@ -73,7 +74,7 @@ export default Plugin.define({
               await rpc.events.emit("closed", { id: request.id })
             })
           context.signal.throwIfAborted()
-          if (!output) throw new Error("Sudo was cancelled, expired, or the native helper disconnected.")
+          if (!output) throw new Error("Sudo was cancelled or the native helper disconnected.")
           return {
             output,
             content: [

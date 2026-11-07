@@ -18,6 +18,7 @@ test
     "crash",
     "diagnostics",
     "slow-auth",
+    "long-auth",
     "stale",
     "remote",
     "replace",

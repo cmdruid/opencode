@@ -36,7 +36,7 @@ The review is 60 columns wide (or fits the terminal), with a content-sized comma
 
 There is no password RPC, password form, or password state in JavaScript. Authentication stdout/stderr stay on the terminal as well, since PAM messages can contain sensitive text. Commands run in `/bin/sh` with `/dev/null` stdin, a new session, and no controlling terminal. Only their stdout/stderr enter the tool result; output is limited to the last 65536 characters.
 
-The command timeout defaults to two minutes and starts after authentication. Pending requests and authentication have bounded lifetimes; the server allows five minutes plus the command timeout for a handoff. Cancellation and timeout terminate the command through sudo; neither rolls back completed operations. The native guard remains until dismissed even when the server has closed the request.
+The agent waits for your response: pending approval requests and native authentication have no plugin-imposed deadline. System sudo still enforces its own authentication policy. The command timeout defaults to two minutes and starts only after authentication succeeds. Explicit cancellation, plugin shutdown, or a native helper disconnect ends the pending request. Cancellation and command timeout terminate the command through sudo; neither rolls back completed operations. The native guard remains until dismissed even when the server has closed the request.
 
 ## Security boundary
 
