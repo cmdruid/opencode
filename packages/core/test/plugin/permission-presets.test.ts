@@ -7,7 +7,7 @@ import { PluginHost } from "@opencode/core/plugin/host"
 import { Rpc } from "@opencode/core/rpc"
 import { ProjectTable } from "@opencode/core/project/sql"
 import { Model } from "@opencode/schema/model"
-import { Effect, Schema } from "effect"
+import { Effect, Schedule, Schema } from "effect"
 import path from "node:path"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
@@ -100,7 +100,7 @@ it.live("manual, automatic and shadow presets route actual requests; switching l
     yield* test.client.setSession({ sessionID: test.session.id, change: { type: "reviewer", mode: "shadow" } })
     const shadow = yield* test.permission.ask(request)
     expect(shadow.effect).toBe("ask")
-    expect((yield* test.permission.get(shadow.id))?.message).toContain("Shadow review suggests approve")
+    expect((yield* test.permission.get(shadow.id))?.message).toContain("Review: Approve · Shadow")
     expect(test.calls).toHaveLength(2)
     // An action excluded from model review still requires the human's approval.
     expect((yield* test.permission.ask({ ...request, action: "edit", resources: ["../outside"] })).effect).toBe("ask")
@@ -257,5 +257,72 @@ it.live("presets persist, inherit through subagents, isolate unrelated sessions 
       preset: "read-only",
       mode: "manual",
     })
+  }),
+)
+
+it.live("fast rules respect explicit denials, manual and shadow modes and never call a model", () =>
+  Effect.gen(function* () {
+    const plugins = yield* Plugin.Service
+    const permission = yield* Permission.Service
+    const host = yield* PluginHost.make(plugins, reviewer.id)
+    const session = yield* host.session.create({
+      permissions: [
+        { action: "*", resource: "*", effect: "ask" },
+        { action: "skill", resource: "blocked", effect: "deny" },
+        { action: "read", resource: "blocked.txt", effect: "deny" },
+      ],
+    })
+    let calls = 0
+    yield* reviewer.effect({
+      ...host,
+      options: { model: Model.Ref.parse("missing/model"), mode: "chat", defaultMode: "auto" },
+      experimental: {
+        ...host.experimental,
+        generate: {
+          ...host.experimental.generate,
+          text: () =>
+            Effect.sync(() => {
+              calls++
+              return { text: '{"decision":"escalate","reason":"Fixture"}' }
+            }),
+        },
+      },
+    })
+    yield* Effect.promise(() => Bun.write(path.join(host.location.directory, "allowed.txt"), "fixture"))
+    yield* Effect.promise(() => Bun.write(path.join(host.location.directory, "blocked.txt"), "fixture"))
+    for (const request of [
+      { action: "skill", resources: ["tracker"] },
+      { action: "todowrite", resources: ["*"] },
+      { action: "read", resources: ["allowed.txt"] },
+    ])
+      expect((yield* permission.ask({ ...request, sessionID: session.id })).effect).toBe("allow")
+    for (const request of [
+      { action: "skill", resources: ["blocked"] },
+      { action: "read", resources: ["blocked.txt"] },
+    ])
+      expect((yield* permission.ask({ ...request, sessionID: session.id })).effect).toBe("deny")
+    const client = host.rpc(Contract)
+    expect((yield* client.history({ sessionID: session.id })).map((item) => item.path)).toContain("tool-rule")
+    for (const mode of ["shadow", "manual"] as const) {
+      yield* client.setSession({
+        sessionID: session.id,
+        change: { type: "fallback", mode: mode === "manual" ? "off" : mode },
+      })
+      const pending = yield* permission.ask({ sessionID: session.id, action: "skill", resources: ["tracker"] })
+      expect(pending.effect).toBe("ask")
+      if (pending.effect !== "ask") throw new Error("Expected pending fixture")
+      yield* permission.reply({ requestID: pending.id, reply: "once" })
+      if (mode === "shadow") {
+        const records = yield* client.history({ sessionID: session.id }).pipe(
+          Effect.repeat({
+            while: (records) => !records.find((record) => record.requestID === pending.id)?.reply,
+            schedule: Schedule.spaced("5 millis"),
+          }),
+          Effect.timeout("2 seconds"),
+        )
+        expect(records.find((record) => record.requestID === pending.id)?.reply?.decision).toBe("once")
+      }
+    }
+    expect(calls).toBe(0)
   }),
 )

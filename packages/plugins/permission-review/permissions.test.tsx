@@ -123,7 +123,7 @@ test("editor preserves a failed draft, saves to its parent, and cancels without 
   await f.open("Reset to Defaults")
   expect(f.data.fixture.writes[1]).toEqual({
     patch: {},
-    reset: ["actions", "policy"],
+    reset: ["autoAllowTools", "workspaceReads", "actions", "policy"],
   })
 })
 
@@ -437,4 +437,19 @@ test("history distinguishes approval scores from confidence and retains legacy t
   expect(
     describe({ ...entry, classifier: { ...entry.classifier!, thresholdMetric: undefined, approvalScore: undefined } }),
   ).toContain("Confidence: 88.63%; threshold: 90%")
+})
+
+test.each([44, 112])("fast-rule settings persist and reset at %s columns", async (width) => {
+  await using f = await fixture(width)
+  await f.open("Settings")
+  await f.open("Review Rules")
+  await f.open("Auto-allow skill")
+  expect(f.data.fixture.writes.at(-1)).toEqual({ patch: { autoAllowTools: ["todowrite"] } })
+  await f.open("Workspace reads")
+  expect(f.data.fixture.writes.at(-1)).toEqual({ patch: { workspaceReads: false } })
+  f.app.mockInput.pressKey("r", { ctrl: true })
+  await f.ready()
+  await f.open("Reset to Defaults")
+  expect(f.data.fixture.writes.at(-1)?.reset).toContain("workspaceReads")
+  expect(f.data.fixture.writes.at(-1)?.reset).toContain("autoAllowTools")
 })

@@ -209,7 +209,6 @@ Plugin SHA256: `7e8e5af3a7f86265e4996a7782b46bee1372af59a2841c873e357507f84cfb12
 
 Host backup: `~/.opencode/backups/before-host-perm-answers-20261107/opencode`. Configuration backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T06-37-40-774Z`. Final activation verification: `/tmp/perm-answers-activation-verification.json`. Existing requests were not replayed; this verifies evidence delivery and routing, not general model accuracy. npm publication remains deferred.
 
-
 ## Compact review prompts — 2026-11-07
 
 Alpha.9 separates the pending prompt from the stored explanation. The status line shows classifier decision/probability and reviewer decision; a short Reason follows. The reviewer can supply an optional unlabeled detail identifying the relevant script, file, target or effect. Reason and detail are capped at 120 characters each, with whitespace normalized and details fenced safely. Missing new fields remain compatible with existing models and historical records. Full model reasons remain in Activity history. Decision routing, threshold and approval policy are unchanged.
@@ -226,3 +225,34 @@ Validation:
 Plugin SHA256: `f444768a03c378a52b847eb832bd091325e6facae244307fcb941b890a821a10`. Host `2.2.5-cmdruid.permprompt.20261107` SHA256: `fcb63e5aa18944bde654740575d0d1edf3fef3b16714f93826897f2b788ba22f`, including web UI. Activated with no active sessions or pending requests. Alpha.9 is active at `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.9/node_modules/@cmdcode/opencode-auto-permissions`. All 11 session choices and complete settings preserved, including 90% threshold and plain maple/gemma4-31b. Existing endpoint 127.0.0.1:49374, server PID 2234089.
 
 Host rollback copy: `~/.opencode/backups/before-host-perm-prompt-20261107/opencode`. Configuration rollback copy: `~/.opencode/backups/before-auto-permissions-2026-11-07T20-22-09-354Z`. Activation report: `/tmp/perm-prompt-activation-verification.json`. Terminal client PID 1317248 remains on the old executable and needs reopening for native highlighting; live server/plugin update is verified. Npm publication remains deferred.
+
+## Accepted pre-release improvements — 2026-11-07
+
+Version `0.1.0-alpha.10` adds default fast rules for `skill`, `todowrite` and concrete workspace reads. Real-path checks reject symlink escapes, outside/missing/mixed targets and wildcard paths. Configured denials and action filters still win; Manual/Off retain human control and Shadow records advice. Review Rules exposes individual toggles. Eligible requests avoid model resolution, model calls and approval-history loading.
+
+The host's existing experimental authorization API now attaches the preceding completed assistant proposal to its user reply, including after compaction. It excludes reasoning, tool output, unfinished messages and reverted context. Both evaluators receive the same evidence and instructions distinguishing the user's acceptance from the proposal itself.
+
+Diagnostics use a global rolling index bounded by 500 records, 20 MiB including the index, 14 days, and 256 KiB per record. Startup migrates existing history; access and hourly sweeps expire it. Stored model inputs/outputs, failures, timings, policy/version, configured model names and native replies support diagnosis. Redaction affects only stored/exported copies. Settings and remembered approvals remain separate. Activity exports to an explicitly selected new local file; offline replay shares production classifier threshold logic and performs no model calls, tool execution or permission replies. Native reply events do not identify their origin and must not all be treated as human accuracy labels. Redaction is best effort; inspect exports before sharing.
+
+Validation:
+
+- Full plugin suite: 60 passed, 548 assertions.
+- Affected Core suites (authorization, diagnostics, review, presets, fallback and session approvals): 40 passed, 430 assertions. Final diagnostic byte-accounting check: 3 passed, 22 assertions.
+- Real permission/preset suite repeated ten times: 120 passed, 2030 assertions. This includes immediate native reply capture, explicit denials, Shadow/Off and zero model calls on fast paths.
+- Settings renderer at 44/112 columns repeated ten times: 160 passed, 1570 assertions.
+- Official Core and plugin TypeScript checks passed. Final root `bun run check`: 36/36 tasks passed.
+- Host built with the web UI included: `2.2.5-cmdruid.permfollowup.20261107`.
+- Exact packed artifact passed isolated host activation, settings/connection persistence, queued approval, original user/question evidence after compaction, classifier-to-reviewer delegation, native prompt rendering at 44/112 columns, fast rules, diagnostic export and offline replay. Report: `/tmp/permission-package-check-GNbTc4/verification.json`.
+
+Artifact: `artifacts/cmdcode-opencode-auto-permissions-0.1.0-alpha.10.tgz` (11 files).
+SHA256: `ef9d63985c17e2aadf29cc14c3652c662f5c054ed654f1521909474d36985ec0`.
+Host SHA256: `4cbbceab1ff9590df0eab99dadd8e07800caf678fd9242cdce194297ea135feb`.
+
+Activated on the existing idle service after rechecking for active sessions and pending permissions. Endpoint remains `http://127.0.0.1:49374`; PID 2483270. All 11 existing session selections and prior effective server settings were preserved. New rule defaults are enabled. Threshold remains 90%; reviewer remains plain `maple/gemma4-31b`. No live permission requests were answered or sent to models during verification.
+
+Installation: `~/.local/share/opencode/local-plugins/auto-permissions-0.1.0-alpha.10/node_modules/@cmdcode/opencode-auto-permissions`.
+Host backup: `~/.opencode/backups/before-host-perm-followup-20261107/opencode`.
+Configuration backup: `~/.opencode/backups/before-auto-permissions-2026-11-07T21-43-03-499Z`.
+Activation report: `/tmp/perm-followup-activation-verification.json`.
+
+Publication remains on hold (`private: true`), with no npm release, remote push or upstream PR changes. Upstream compatibility work follows local delivery of this accepted scope.

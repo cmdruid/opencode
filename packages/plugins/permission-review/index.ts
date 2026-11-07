@@ -1,10 +1,13 @@
 import { Plugin } from "@opencode/plugin/effect"
 import type { RpcRegistration } from "@opencode/plugin/effect/rpc"
-import { Clock, Effect, Option, Schema } from "effect"
+import { Clock, Effect, Option, Schema, Schedule, Stream } from "effect"
 import path from "node:path"
 import type { AssertInput } from "@opencode/plugin/permission"
 import { Assessment, Contract, FallbackMode, ReviewMode, ReviewWith, Selection, SessionApproval } from "./contract.js"
 import { Options, presentation, review } from "./review.js"
+import { autoAllow } from "./rules.js"
+import { capture, diagnostics } from "./diagnostics.js"
+import manifest from "./package.json"
 import { connections } from "./connections.js"
 import { settings, reviewOptions } from "./settings.js"
 
@@ -18,6 +21,13 @@ export default Plugin.define({
   id: "opencode.permission-review",
   effect: Effect.fn(function* (ctx) {
     const options = yield* Schema.decodeUnknownEffect(Options)(ctx.options).pipe(Effect.orDie)
+    const log = diagnostics(ctx.storage)
+    yield* log.sweep
+    yield* log.sweep.pipe(Effect.repeat(Schedule.spaced("1 hour")), Effect.forkScoped)
+    yield* ctx.event.subscribe({ types: ["permission.replied"] }).pipe(
+      Stream.runForEach((event) => log.reply(event.data.requestID, event.data.reply)),
+      Effect.forkScoped({ startImmediately: true }),
+    )
     const config = settings(ctx, options)
     const currentOptions = config.read.pipe(Effect.map((value) => reviewOptions(value.values)))
     const connection = yield* connections(ctx, options, currentOptions)
@@ -216,21 +226,13 @@ export default Plugin.define({
           yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
           yield* ctx.storage.remove(`approval/${input.sessionID}/${input.requestID}`)
         }),
+        exportDiagnostics: Effect.fn(function* (input) {
+          yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
+          return yield* log.list(input.sessionID, 500)
+        }),
         history: Effect.fn(function* (input) {
           yield* ctx.session.get({ sessionID: input.sessionID }).pipe(Effect.orDie)
-          const entries: Assessment[] = []
-          let after: string | undefined
-          do {
-            const page = yield* ctx.storage.scan({ prefix: "review/", after, limit: 100 })
-            entries.push(
-              ...page.entries.flatMap((entry) => {
-                const value = Schema.decodeUnknownOption(Assessment)(entry.value)
-                return Option.isSome(value) && value.value.sessionID === input.sessionID ? [value.value] : []
-              }),
-            )
-            after = page.next
-          } while (after)
-          return entries.toSorted((a, b) => b.at - a.at).slice(0, 50)
+          return yield* log.list(input.sessionID)
         }),
       })
       .pipe(Effect.orDie)
@@ -268,22 +270,77 @@ export default Plugin.define({
         // the inactive classifier's mode must not gate the chat reviewer.
         if (selected.mode === "manual" && (!reviewerOnly || !["configured", "auto"].includes(selected.preset))) return
         const started = yield* Clock.currentTimeMillis
+        if (chatOnly && !values.fallback) return
+        const configuredModel = chatOnly && values.fallback ? values.fallback.model : values.model
+        const backend = chatOnly ? "chat" : values.mode
+        const shadow = reviewerOnly ? chatMode === "shadow" : selected.mode === "shadow"
+        const rule = yield* autoAllow(ctx.location.directory, event.request, values)
+        if (rule) {
+          const assessment: Assessment = {
+            requestID: event.request.id,
+            sessionID: event.request.sessionID,
+            action: event.request.action,
+            resources: event.request.resources,
+            model: configuredModel,
+            mode: backend ?? "chat",
+            shadow,
+            at: yield* Clock.currentTimeMillis,
+            durationMs: (yield* Clock.currentTimeMillis) - started,
+            decision: "approve",
+            reason: rule.reason,
+            path: rule.path,
+            diagnostics: {
+              pluginVersion: manifest.version,
+              policyVersion: 2,
+              rules: {
+                autoAllowTools: values.autoAllowTools ?? ["skill", "todowrite"],
+                workspaceReads: values.workspaceReads ?? true,
+              },
+            },
+          }
+          yield* log.put(assessment)
+          event.result = {
+            decision: shadow ? "escalate" : "approve",
+            reason: shadow ? `Rule: Approve · Shadow\n\nReason: ${rule.reason}` : rule.reason,
+          }
+          return
+        }
         const remembered = (yield* approvals(event.request.sessionID))
           .filter((entry) => entry.action === event.request.action)
           .slice(0, 20)
         const chat = yield* fallback(event.request.sessionID, values)
-        if (chatOnly && (!chat || chat.mode === "off")) return
         const model = chatOnly && chat ? chat.model : yield* connection.model("classifier", values).pipe(Effect.orDie)
-        const configuredModel = chatOnly && values.fallback ? values.fallback.model : values.model
-        const backend = chatOnly ? "chat" : values.mode
-        const shadow = reviewerOnly ? chatMode === "shadow" : selected.mode === "shadow"
+        const trace = capture()
+        const reviewedContext = {
+          ...ctx,
+          experimental: {
+            ...ctx.experimental,
+            generate: {
+              ...ctx.experimental.generate,
+              text: (input: Parameters<typeof ctx.experimental.generate.text>[0]) =>
+                trace.run(
+                  "reviewer",
+                  { ...input, model: chatOnly ? configuredModel : (values.fallback?.model ?? configuredModel) },
+                  ctx.experimental.generate.text(input),
+                ),
+              decisions: (input: Parameters<typeof ctx.experimental.generate.decisions>[0]) =>
+                trace.run(
+                  "classifier",
+                  { ...input, model: configuredModel },
+                  ctx.experimental.generate.decisions(input),
+                ),
+            },
+          },
+        }
         const reviewed = review(
-          ctx,
+          reviewedContext,
           event,
           { ...values, mode: backend, model, fallback: chatOnly ? undefined : chat },
           remembered,
         )
-        const result = yield* (chatOnly && chat ? reviewed.pipe(Effect.timeout(chat.timeoutMs)) : reviewed).pipe(
+        const result: Effect.Success<ReturnType<typeof review>> = yield* (
+          chatOnly && chat ? reviewed.pipe(Effect.timeout(chat.timeoutMs)) : reviewed
+        ).pipe(
           Effect.catch((error) =>
             Effect.succeed({
               decision: "escalate" as const,
@@ -294,23 +351,41 @@ export default Plugin.define({
           ),
         )
         const completed = yield* Clock.currentTimeMillis
-        yield* ctx.storage.set(`review/${event.request.id}`, {
+        yield* log.put({
           requestID: event.request.id,
           sessionID: event.request.sessionID,
           action: event.request.action,
           resources: event.request.resources,
-          model: { providerID: model.providerID, id: model.id },
+          model: configuredModel,
           mode: backend ?? "chat",
           shadow,
           at: completed,
           durationMs: completed - started,
           ...result,
+          ...(result.fallback && values.fallback
+            ? { fallback: { ...result.fallback, model: values.fallback.model } }
+            : {}),
+          path: "model",
+          diagnostics: {
+            pluginVersion: manifest.version,
+            policyVersion: 2,
+            calls: trace.calls,
+            redacted: trace.calls.some((call) => call.redacted),
+            truncated: trace.calls.some((call) => call.truncated),
+            policy: {
+              reviewWith: values.reviewWith ?? "both",
+              mode: selected.mode,
+              reviewerMode: chatMode,
+              threshold: values.minConfidence ?? 0.98,
+              instructions: values.policy ?? "",
+            },
+            preparationMs: completed - started - trace.calls.reduce<number>((sum, call) => sum + call.durationMs, 0),
+          },
         })
         yield* Effect.logInfo("Automatic permission review", {
           requestID: event.request.id,
           decision: result.decision,
           shadow,
-          reason: result.reason,
         })
         event.result = {
           decision: shadow ? "escalate" : result.decision,

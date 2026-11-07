@@ -82,6 +82,7 @@ export function settingsFixture() {
       { providerID: "fixture", id: "classifier", type: "decision", variants: [] },
       { providerID: "fixture", id: "chat", type: "chat", variants: [{ id: "bounded" }] },
     ],
+    exportDiagnostics: async () => {},
     history: async () => fixture.history,
     approvals: async () => fixture.approvals,
     revoke: async (requestID) => {

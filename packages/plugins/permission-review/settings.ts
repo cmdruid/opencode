@@ -13,6 +13,8 @@ export function resolveSettings(options: typeof Options.Type, overrides: Overrid
     mode: options.mode ?? "chat",
     minConfidence: options.minConfidence ?? 0.98,
     defaultMode: options.defaultMode ?? (options.shadow ? "shadow" : "auto"),
+    autoAllowTools: options.autoAllowTools ?? ["skill", "todowrite"],
+    workspaceReads: options.workspaceReads ?? true,
     actions: options.actions ?? null,
     policy: options.policy ?? "",
     fallback: options.fallback

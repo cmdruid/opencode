@@ -40,6 +40,7 @@ export interface SettingsActions {
   session(): Promise<State | undefined>
   change(input: SessionChange): Promise<State>
   models(): Promise<readonly { providerID: string; id: string; type?: string; variants: readonly { id: string }[] }[]>
+  exportDiagnostics(file: string): Promise<void>
   history(): Promise<readonly Assessment[]>
   approvals(): Promise<readonly SessionApproval[]>
   revoke(requestID: string): Promise<void>
@@ -211,7 +212,7 @@ export function PermissionSettings(props: {
                       : ["fallback"]
                     : scope === "Global Policy"
                       ? ["reviewWith", "defaultMode", "reviewerMode"]
-                      : ["actions", "policy"],
+                      : ["autoAllowTools", "workspaceReads", "actions", "policy"],
             })
           }
           setPages((items) => {
@@ -482,6 +483,23 @@ export function PermissionSettings(props: {
     ])
   const rules = () =>
     menu("Review Rules", "All sessions on this server", () => [
+      ...(["skill", "todowrite"] as const).map((tool) => ({
+        title: `Auto-allow ${tool}`,
+        value: values().autoAllowTools.includes(tool) ? "On" : "Off",
+        detail: "Skip model review in Approve mode; explicit denials still apply",
+        run: () =>
+          patch({
+            autoAllowTools: values().autoAllowTools.includes(tool)
+              ? values().autoAllowTools.filter((item) => item !== tool)
+              : [...values().autoAllowTools, tool],
+          }),
+      })),
+      {
+        title: "Workspace reads",
+        value: values().workspaceReads ? "Auto-allow" : "Review",
+        detail: "Resolved paths inside the session directory; Approve mode only",
+        run: () => patch({ workspaceReads: !values().workspaceReads }),
+      },
       {
         title: "Reviewed actions",
         value:
@@ -601,6 +619,16 @@ export function PermissionSettings(props: {
                     })),
                   )
                 },
+              },
+              {
+                title: "Export diagnostics",
+                detail: "Local JSON; redacted, but may contain task text and paths",
+                run: () =>
+                  edit("Export diagnostics to a new local file", "permission-diagnostics.json", async (file) => {
+                    await props.actions.exportDiagnostics(file)
+                    back()
+                    detail("Diagnostics exported", `Saved to ${file}. Review the contents before sharing.`)
+                  }),
               },
               {
                 title: "Remembered approvals",
@@ -954,6 +982,8 @@ export function describe(entry: Assessment) {
     `${entry.shadow ? "Shadow proposal" : "Reviewer decision"}: ${entry.decision}`,
     ...(entry.summary || entry.fallback?.summary ? [`Summary: ${entry.fallback?.summary || entry.summary}`] : []),
     ...(entry.details || entry.fallback?.details ? [entry.fallback?.details || entry.details!] : []),
+    ...(entry.path ? [`Decision path: ${entry.path}`] : []),
+    ...(entry.reply ? [`Reply: ${entry.reply.decision}`] : []),
     `Action: ${entry.action}`,
     `Resources: ${entry.resources?.join(", ") ?? "none"}`,
     `Reviewer: ${modelName(entry.model)}`,

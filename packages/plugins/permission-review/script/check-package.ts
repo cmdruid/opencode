@@ -33,6 +33,8 @@ assert.deepEqual(
     "index.ts",
     "package.json",
     "review.ts",
+    "rules.ts",
+    "diagnostics.ts",
     "settings.ts",
     "tui.js",
   ]
@@ -142,7 +144,12 @@ await Bun.write(
       plugins: [
         {
           package: installed,
-          options: { model: { providerID: "fixture", id: "decision" }, mode: "decision", defaultMode: "auto" },
+          options: {
+            model: { providerID: "fixture", id: "decision" },
+            mode: "decision",
+            defaultMode: "auto",
+            workspaceReads: false,
+          },
         },
       ],
     },
@@ -362,6 +369,24 @@ try {
   )
   assert.equal(diagnostic?.fallback?.reason, fullReason)
   assert.equal(diagnostic?.fallback?.details, details)
+  assert(diagnostic?.diagnostics?.calls)
+  const exportedDiagnostics = await rpc<Assessment[]>("exportDiagnostics", { sessionID: answered.data.id })
+  assert(exportedDiagnostics.some((item) => item.requestID === escalated.data.id))
+  const exportFile = path.join(root, "diagnostics.json")
+  await Bun.write(exportFile, JSON.stringify({ format: 1, records: exportedDiagnostics }), { mode: 0o600 })
+  const replayed = await run(["bun", path.join(import.meta.dir, "replay.ts"), exportFile, "0.9"])
+  assert(replayed.includes(escalated.data.id))
+  const beforeRules = calls.length
+  await rpc("saveSettings", { patch: { workspaceReads: true } })
+  for (const input of [
+    { action: "skill", resources: ["tracker"] },
+    { action: "todowrite", resources: ["*"] },
+    { action: "read", resources: ["README.md"] },
+  ]) {
+    const allowed = await request<{ data: { effect: string } }>(`/api/session/${answered.data.id}/permission`, input)
+    assert.equal(allowed.data.effect, "allow")
+  }
+  assert.equal(calls.length, beforeRules)
   await run(
     [
       "tmux",
@@ -441,6 +466,8 @@ try {
     questionAuthorizationRestored: delegated.data.effect === "allow",
     classifierEscalationResolved: true,
     compactPromptVerified: true,
+    fastRulesVerified: true,
+    diagnosticExportVerified: true,
     fullDiagnosticPreserved: true,
     promptWidths: [44, 112],
     compactedAuthorizationRestored: restored.data.effect === "allow",

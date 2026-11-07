@@ -5,7 +5,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { Rpc } from "@opencode/core/rpc"
-import { Effect, Schema } from "effect"
+import { Clock, Effect, Schema } from "effect"
 import reviewer from "../../../plugins/permission-review/index"
 import { Contract } from "../../../plugins/permission-review/contract"
 import { testEffect } from "../lib/effect"
@@ -116,7 +116,7 @@ it.live("history includes legacy assessments, crosses storage pages, and returns
     const host = yield* PluginHost.make(plugins, reviewer.id)
     const session = yield* host.session.create({ title: "History trial" })
     const other = yield* host.session.create({ title: "Other history" })
-    yield* reviewer.effect({ ...host, options: { model: Model.Ref.parse("test/reviewer"), defaultMode: "manual" } })
+    const now = yield* Clock.currentTimeMillis
     yield* Effect.forEach(
       Array.from({ length: 175 }, (_, index) => index),
       (index) =>
@@ -127,17 +127,18 @@ it.live("history includes legacy assessments, crosses storage pages, and returns
           model: { providerID: "test", id: "reviewer" },
           mode: "chat",
           shadow: true,
-          at: index,
+          at: now + index,
           durationMs: 1,
           decision: "approve",
           reason: "Recorded assessment",
         }),
     )
     yield* host.storage.set("review/invalid", { sessionID: session.id })
+    yield* reviewer.effect({ ...host, options: { model: Model.Ref.parse("test/reviewer"), defaultMode: "manual" } })
     const entries = yield* host.rpc(Contract).history({ sessionID: session.id })
     expect(entries).toHaveLength(50)
-    expect(entries[0].at).toBe(174)
-    expect(entries.at(-1)?.at).toBe(125)
+    expect(entries[0].at).toBe(now + 174)
+    expect(entries.at(-1)?.at).toBe(now + 125)
     expect(entries.every((entry) => entry.sessionID === session.id)).toBe(true)
     expect(entries[0].classifier).toBeUndefined()
   }),

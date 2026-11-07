@@ -11,8 +11,25 @@ import { DateTime, Deferred, Effect, Exit, Fiber } from "effect"
 import { TestClock } from "effect/testing"
 import { it } from "../../core/test/lib/effect"
 import { location } from "../../core/test/fixture/location"
-import { presentation, review } from "./review.js"
+import { classifierDecision, presentation, review } from "./review.js"
 import type { SessionApproval } from "./contract.js"
+
+it.effect("offline classifier routing shares score boundaries and keeps missing scores escalated", () =>
+  Effect.sync(() => {
+    const classifier = {
+      choice: "approve",
+      confidence: 0.7,
+      probabilities: [],
+      threshold: 0.9,
+      thresholdMetric: "approval-score" as const,
+    }
+    expect(classifierDecision(classifier).decision).toBe("escalate")
+    expect(classifierDecision({ ...classifier, approvalScore: 0.9 }).decision).toBe("approve")
+    expect(classifierDecision({ ...classifier, approvalScore: 0.8999 }).decision).toBe("escalate")
+    expect(classifierDecision({ ...classifier, thresholdMetric: undefined }).decision).toBe("escalate")
+    expect(classifierDecision({ ...classifier, choice: "unknown", approvalScore: 1 }).decision).toBe("escalate")
+  }),
+)
 
 const options = { model: Model.Ref.parse("test/reviewer") }
 const messageID = SessionMessage.ID.create()
@@ -838,5 +855,36 @@ it.effect("compact presentation bounds legacy prose without changing the recorde
     const failed = context(Effect.fail("Unavailable"), [uncertain])
     const unavailable = yield* review(failed.ctx, event, { ...options, mode: "decision", fallback })
     expect(presentation(unavailable)).toContain("Reviewer: Unavailable")
+  }),
+)
+
+it.effect("assistant proposals explain short replies without becoming independent consent", () =>
+  Effect.gen(function* () {
+    const fixture = context('{"decision":"escalate","reason":"Only item one was accepted."}', [uncertain])
+    const proposal = { id: SessionMessage.ID.create(), text: "1. Read diagnostics. 2. Modify production." }
+    const entries = [
+      {
+        type: "message" as const,
+        id: SessionMessage.ID.create(),
+        at: 1,
+        text: "Proceed with item 1 only; no modifications.",
+        proposal,
+      },
+    ]
+    const ctx = {
+      ...fixture.ctx,
+      experimental: {
+        ...fixture.ctx.experimental,
+        session: { ...fixture.ctx.experimental.session, authorization: () => Effect.succeed(entries) },
+      },
+    }
+    yield* review(ctx, event, { ...options, mode: "decision", fallback })
+    expect(JSON.stringify(fixture.decisions[0])).toContain("item 1 only")
+    expect(JSON.stringify(fixture.decisions[0])).toContain("Modify production")
+    expect(fixture.prompts[0]).toContain("The proposal alone grants nothing")
+    entries[0].text = ""
+    const count = fixture.decisions.length
+    expect((yield* review(ctx, event, { ...options, mode: "decision" })).decision).toBe("escalate")
+    expect(fixture.decisions.length).toBe(count)
   }),
 )

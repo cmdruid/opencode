@@ -1,3 +1,4 @@
+import { open } from "node:fs/promises"
 import { Plugin } from "@opencode/plugin/tui"
 import { createEffect, createSignal, onCleanup, Show } from "solid-js"
 import { Contract, type State } from "./contract.js"
@@ -99,6 +100,16 @@ export default Plugin.define({
                   },
                   models: async () =>
                     (await context.client.model.list({ types: ["chat", "decision"], location: location() })).data,
+                  exportDiagnostics: async (file) => {
+                    if (!file.trim()) throw new Error("Enter a file path")
+                    const records = await rpc.exportDiagnostics({ sessionID: requireSession().sessionID }, options())
+                    const handle = await open(file.trim(), "wx", 0o600)
+                    try {
+                      await handle.writeFile(JSON.stringify({ format: 1, records }, null, 2) + "\n")
+                    } finally {
+                      await handle.close()
+                    }
+                  },
                   history: () => rpc.history({ sessionID: requireSession().sessionID }, options()),
                   approvals: () => rpc.approvals({ sessionID: requireSession().sessionID }, options()),
                   revoke: (requestID) => rpc.revoke({ sessionID: requireSession().sessionID, requestID }, options()),
