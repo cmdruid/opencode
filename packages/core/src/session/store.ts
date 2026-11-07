@@ -217,6 +217,7 @@ const layer = Layer.effect(
           .select({
             id: SessionMessageTable.id,
             at: SessionMessageTable.time_created,
+            seq: SessionMessageTable.seq,
             text: sql<string>`json_extract(${SessionMessageTable.data}, '$.text')`,
           })
           .from(SessionMessageTable)
@@ -226,6 +227,51 @@ const layer = Layer.effect(
           .orderBy(asc(SessionMessageTable.seq))
           .all()
           .pipe(Effect.orDie)
+        // Only completed assistant text before the reply can explain it. Exclude reasoning,
+        // tool output and text appended after a user steers an unfinished step.
+        const proposals = yield* db
+          .select({
+            id: SessionMessageTable.id,
+            seq: SessionMessageTable.seq,
+            completed: sql<number>`json_extract(${SessionMessageTable.data}, '$.time.completed')`,
+            text: sql<string>`json_extract(part.value, '$.text')`,
+          })
+          .from(SessionMessageTable)
+          .innerJoin(sql`json_each(${SessionMessageTable.data}, '$.content') as part`, sql`true`)
+          .where(
+            and(
+              eq(SessionMessageTable.session_id, input.sessionID),
+              boundary,
+              eq(SessionMessageTable.type, "assistant"),
+              sql`json_extract(part.value, '$.type') = 'text'`,
+              sql`json_extract(${SessionMessageTable.data}, '$.time.completed') is not null`,
+            ),
+          )
+          .orderBy(asc(SessionMessageTable.seq), sql`part.key`)
+          .all()
+          .pipe(Effect.orDie)
+        const storedProposals = yield* db
+          .select({
+            id: SessionMessageTable.id,
+            seq: SessionMessageTable.seq,
+            completed: sql<number>`json_extract(${SessionMessageTable.data}, '$.time.completed')`,
+            text: sql<string>`json_extract(${SessionPartTable.data}, '$.text')`,
+          })
+          .from(SessionPartTable)
+          .innerJoin(SessionMessageTable, eq(SessionMessageTable.id, SessionPartTable.message_id))
+          .where(
+            and(
+              eq(SessionPartTable.session_id, input.sessionID),
+              boundary,
+              eq(SessionMessageTable.type, "assistant"),
+              eq(SessionPartTable.type, "text"),
+              sql`json_extract(${SessionMessageTable.data}, '$.time.completed') is not null`,
+            ),
+          )
+          .orderBy(asc(SessionMessageTable.seq), asc(SessionPartTable.ordinal))
+          .all()
+          .pipe(Effect.orDie)
+        const preceding = [...proposals, ...storedProposals].sort((a, b) => a.seq - b.seq)
         const parts = yield* db
           .select({ id: SessionPartTable.message_id, data: SessionPartTable.data })
           .from(SessionPartTable)
@@ -282,9 +328,33 @@ const layer = Layer.effect(
           ]
         })
         // An answer can arrive after a later user message while its assistant step is still open.
-        return [...messages.map((message) => ({ type: "message" as const, ...message })), ...answers].sort(
-          (a, b) => a.at - b.at,
-        )
+        return [
+          ...messages.map((message, index) => {
+            const eligible = preceding.filter(
+              (part) =>
+                part.seq < message.seq && part.seq > (messages[index - 1]?.seq ?? -1) && part.completed <= message.at,
+            )
+            const last = eligible.at(-1)
+            return {
+              type: "message" as const,
+              id: message.id,
+              at: message.at,
+              text: message.text,
+              ...(last
+                ? {
+                    proposal: {
+                      id: last.id,
+                      text: eligible
+                        .filter((part) => part.id === last.id)
+                        .map((part) => part.text)
+                        .join("\n"),
+                    },
+                  }
+                : {}),
+            }
+          }),
+          ...answers,
+        ].sort((a, b) => a.at - b.at)
       }),
       messages: Effect.fn("SessionStore.messages")(function* (input) {
         return yield* SessionHistory.decodeMessageRows(db, yield* messageRows(input))

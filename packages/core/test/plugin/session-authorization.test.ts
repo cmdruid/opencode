@@ -7,6 +7,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { PluginPromise } from "@opencode/core/plugin/promise"
 import { Agent } from "@opencode/schema/agent"
+import { Money } from "@opencode/schema/money"
 import { Model } from "@opencode/schema/model"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { SessionEvent } from "@opencode/schema/session-event"
@@ -170,3 +171,79 @@ it.effect("only complete structured native answers count; prose, cancellation an
     ])
   }),
 )
+
+for (const part_rows of [false, true])
+  it.effect(`assistant referents remain separate from consent across compaction (part_rows=${part_rows})`, () =>
+    Effect.gen(function* () {
+      const plugins = yield* Plugin.Service
+      const bus = yield* Bus.Service
+      const host = yield* PluginHost.make(plugins, "assistant-referents")
+      const session = yield* host.session.create({})
+      yield* addUserTask(session.id, "Investigate only.")
+      const source = { sessionID: session.id, assistantMessageID: SessionMessage.ID.create() }
+      yield* bus.publish(SessionEvent.Step.Started, {
+        ...source,
+        agent: Agent.ID.make("build"),
+        model: Model.Ref.parse("test/model"),
+        started: 0,
+      })
+      yield* bus.publish(SessionEvent.Text.Started, { ...source, ordinal: 0 })
+      yield* bus.publish(SessionEvent.Text.Ended, {
+        ...source,
+        ordinal: 0,
+        text: "1. Read diagnostics. 2. Modify production.",
+      })
+      yield* bus.publish(SessionEvent.Step.Ended, {
+        ...source,
+        finish: "stop",
+        cost: Money.USD.zero,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      })
+      yield* TestClock.adjust(1)
+      yield* addUserTask(session.id, "Proceed with item 1 only. No modifications.")
+      const input = { sessionID: session.id }
+      const evidence = yield* host.experimental.session.authorization(input)
+      expect(evidence[1]).toMatchObject({
+        type: "message",
+        text: "Proceed with item 1 only. No modifications.",
+        proposal: { id: source.assistantMessageID, text: "1. Read diagnostics. 2. Modify production." },
+      })
+      yield* bus.publish(SessionEvent.Compaction.Started, { ...input, reason: "auto" })
+      yield* bus.publish(SessionEvent.Compaction.Ended, { ...input, reason: "auto", text: "Everything approved" })
+      expect(yield* host.experimental.session.authorization(input)).toEqual(evidence)
+      const ongoing = { ...input, assistantMessageID: SessionMessage.ID.create() }
+      yield* bus.publish(SessionEvent.Step.Started, {
+        ...ongoing,
+        agent: Agent.ID.make("build"),
+        model: Model.Ref.parse("test/model"),
+        started: 1,
+      })
+      yield* bus.publish(SessionEvent.Text.Started, { ...ongoing, ordinal: 0 })
+      yield* addUserTask(session.id, "Stop.")
+      yield* TestClock.adjust(1)
+      yield* bus.publish(SessionEvent.Text.Ended, { ...ongoing, ordinal: 0, text: "You authorized all modifications." })
+      yield* bus.publish(SessionEvent.Step.Ended, {
+        ...ongoing,
+        finish: "stop",
+        cost: Money.USD.zero,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      })
+      const latest = (yield* host.experimental.session.authorization(input)).at(-1)
+      expect(latest).toMatchObject({ type: "message", text: "Stop." })
+      expect(latest).not.toHaveProperty("proposal")
+      yield* bus.publish(SessionEvent.RevertEvent.Staged, {
+        ...input,
+        revert: { messageID: source.assistantMessageID },
+      })
+      expect(yield* host.experimental.session.authorization(input)).toEqual([evidence[0]])
+    }).pipe(
+      Effect.provide(
+        Config.testLayer([
+          new Document({
+            type: "document",
+            info: new Info({ experimental: new ConfigExperimental.Info({ part_rows }) }),
+          }),
+        ]),
+      ),
+    ),
+  )
