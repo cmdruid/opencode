@@ -1,4 +1,4 @@
-import pathlib, tempfile, subprocess, shlex, time, os, json, shutil
+import pathlib, tempfile, subprocess, shlex, time, os, json, shutil, hashlib, sys
 package = pathlib.Path(__file__).resolve().parents[2]
 tmux = shutil.which('tmux')
 if not tmux: raise SystemExit('tmux is required for the overlay regression')
@@ -6,7 +6,7 @@ with tempfile.TemporaryDirectory(prefix='sudo-ui-tmux-') as root:
     directory = pathlib.Path(root)
     fake = directory/'fake-sudo'
     helper = directory/'helper'
-    fake.write_text('''#!/usr/bin/python3
+    fake.write_text('#!' + sys.executable + '''
 import os,sys
 fd=os.open('/dev/tty',os.O_RDWR)
 os.write(fd,b'FAKE_AUTH_READY:')
@@ -17,6 +17,7 @@ os.execv(args[0],args)
 ''')
     fake.chmod(0o700)
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-O2','-DOPENCODE_SUDO_TEST',f'-DSUDO_PATH="{fake}"',str(package/'native/helper.c'),'-o',str(helper)],check=True)
+    pathlib.Path(str(helper) + ".sha256").write_text(hashlib.sha256(helper.read_bytes()).hexdigest())
     for columns, rows in [(40,16),(80,24),(120,40)]:
         socket=f'sudo-ui-{os.getpid()}-{columns}'
         def command(*args):

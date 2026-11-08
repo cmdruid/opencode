@@ -103,7 +103,7 @@ test("pending sudo waits for a suspended terminal to resume", async () => {
   }
 })
 
-test.skipIf(process.platform !== "linux").each([40, 100])(
+test.skipIf(!["linux", "darwin"].includes(process.platform)).each([40, 100])(
   "loaded plugin waits for native cleanup before advancing the queue at %s columns",
   async (width) => {
     const child = Bun.spawn(["python3", `${import.meta.dir}/fixture/native.py`, "loaded", String(width)], {

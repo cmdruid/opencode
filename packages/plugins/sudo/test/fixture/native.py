@@ -22,11 +22,17 @@ with tempfile.TemporaryDirectory(prefix="sudo-pty-test-") as directory:
     temporary = pathlib.Path(directory)
     helper = temporary / "helper"
     fake = temporary / "fake-sudo"
-    fake.write_text('''#!/usr/bin/python3
-import os, sys
+    fake.write_text('#!' + sys.executable + '''
+import os, sys, termios
 scenario = ''' + repr(scenario) + '''
+fd = os.open("/dev/tty", os.O_RDWR)
+original = termios.tcgetattr(fd)
+if sys.platform == "darwin":
+    assert original[3] & termios.ECHO, "Touch ID must start with inherited echo enabled"
 if scenario != "nopasswd":
-    fd = os.open("/dev/tty", os.O_RDWR)
+    password_mode = termios.tcgetattr(fd)
+    password_mode[3] &= ~(termios.ECHO | termios.ECHONL)
+    termios.tcsetattr(fd, termios.TCSAFLUSH, password_mode)
     os.write(fd, b"FAKE_AUTH_READY:")
     password = bytearray()
     while True:
@@ -36,9 +42,7 @@ if scenario != "nopasswd":
     # A PAM conversation may write sensitive text on either stream: neither may be captured.
     os.write(1, b"AUTH_STDOUT:" + password + b"\\n")
     os.write(2, b"AUTH_STDERR:" + password + b"\\n")
-    os.close(fd)
 if scenario == "retry":
-    fd = os.open("/dev/tty", os.O_RDWR)
     os.write(fd, b"FAKE_AUTH_RETRY:")
     password = bytearray()
     while True:
@@ -46,33 +50,38 @@ if scenario == "retry":
         if ch in (b"\\n", b"\\r", b""): break
         password.extend(ch)
     os.write(2, b"RETRY_STDERR:" + password + b"\\n")
-    os.close(fd)
+termios.tcsetattr(fd, termios.TCSAFLUSH, original)
+os.close(fd)
 if scenario == "failure": sys.exit(1)
 args = sys.argv[sys.argv.index("--") + 1:]
 os.execv(args[0], args)
 ''')
     fake.chmod(0o700)
-    subprocess.run([
+    flags = [
         "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-DOPENCODE_SUDO_TEST",
-        '-DSUDO_PATH="' + str(fake) + '"',
-        str(pathlib.Path(os.environ.get("SUDO_NATIVE_SOURCE", str(package / "native"))) / "helper.c"), "-o", str(helper),
-        str(package / "test/fixture/cleanup.c"),
-        '-DTEST_CLEANUP_PATH="' + str(temporary / "cleanup") + '"',
-        '-DTEST_FAILURE="' + scenario + '"',
-        "-Wl,--wrap=tcsetattr", "-Wl,--wrap=tcgetattr", "-Wl,--wrap=tcsetpgrp", "-Wl,--wrap=tcgetpgrp",
-        *([
-            str(package / "test/fixture/clock.c"),
-            '-DTEST_CLOCK_PATH="' + str(temporary / "clock") + '"',
-            "-Wl,--wrap=clock_gettime", "-Wl,--wrap=poll",
-        ] if scenario == "long-auth" else []),
-    ], check=True)
+        f'-DSUDO_PATH="{fake}"', f'-DTEST_CLEANUP_PATH="{temporary}/cleanup"',
+        f'-DTEST_FAILURE="{scenario}"',
+        *([f'-DTEST_CLOCK_PATH="{temporary}/clock"'] if scenario == "long-auth" else []),
+    ]
+    wrappers = ["tcsetattr", "tcgetattr", "tcsetpgrp", "tcgetpgrp"]
+    if scenario == "long-auth": wrappers += ["clock_gettime", "poll"]
+    source = pathlib.Path(os.environ.get("SUDO_NATIVE_SOURCE", str(package / "native"))) / "helper.c"
+    # Rename only the helper's references; wrapper definitions call the real libc symbols.
+    # This also works with Apple's linker, which has no GNU --wrap option.
+    subprocess.run([*flags, *[f"-D{name}=__wrap_{name}" for name in wrappers], "-c",
+                    str(source), "-o", str(temporary / "helper.o")], check=True)
+    subprocess.run([*flags, *[f"-D__real_{name}={name}" for name in wrappers],
+                    str(temporary / "helper.o"), str(package / "test/fixture/cleanup.c"),
+                    *([str(package / "test/fixture/clock.c")] if scenario == "long-auth" else []),
+                    "-o", str(helper)], check=True)
+    pathlib.Path(str(helper) + ".sha256").write_text(hashlib.sha256(helper.read_bytes()).hexdigest())
     if scenario == "loaded":
         bundle = temporary / "plugin"
         bundle.mkdir()
         for name in ("package.json", "index.ts", "rpc.ts", "requests.ts", "tui.js"):
             shutil.copy2(release / name, bundle / name)
         (bundle / "node_modules").symlink_to(package / "node_modules")
-        binary = bundle / "native/bin/linux-x64"
+        binary = bundle / ("native/bin/darwin-arm64" if sys.platform == "darwin" else "native/bin/linux-x64")
         binary.mkdir(parents=True)
         shutil.copy2(helper, binary / "opencode-sudo-tty")
         (binary / "opencode-sudo-tty.sha256").write_text(hashlib.sha256(helper.read_bytes()).hexdigest())
@@ -84,6 +93,9 @@ os.execv(args[0], args)
             os.environ["OTUI_DEBUG"] = "1"
             os.environ["OTUI_NATIVE_INPUT_SHADOW"] = "1"
         os.execv(shutil.which("bun"), ["bun", "--preload", "@opentui/solid/preload", str(package / ("test/fixture/loaded.ts" if scenario == "loaded" else "test/fixture/native.ts")), directory, str(helper), scenario])
+    slave_path = f"/proc/{pid}/fd/0"
+    if sys.platform == "darwin":
+        slave_path = fcntl.ioctl(terminal, 0x40807453, bytes(128)).split(b"\0", 1)[0].decode()
     transcript = bytearray()
     phase = 0
     status = None
@@ -106,7 +118,7 @@ os.execv(args[0], args)
                 phase = 1
             if phase == 1 and b"System sudo" in transcript:
                 native_group = os.tcgetpgrp(terminal)
-                assert native_group != pid, "native helper did not take foreground ownership"
+                assert native_group > 0 and native_group != pid, "native helper did not take foreground ownership"
                 if scenario == "suspend": os.killpg(native_group, signal.SIGTSTP)
                 phase = 2
             if phase == 2 and b"FAKE_AUTH_READY:" in transcript:
@@ -125,6 +137,13 @@ os.execv(args[0], args)
                     helper.write_text("#!/bin/sh\nexit 99\n")
                     helper.chmod(0o755)
                 if scenario == "unlink": helper.unlink()
+                if scenario == "overwrite":
+                    try:
+                        helper.write_text("#!/bin/sh\nexit 99\n")
+                        helper.chmod(0o755)
+                    except OSError as error:
+                        # Linux pins the running file and rejects writes with ETXTBSY.
+                        if sys.platform != "linux" or error.errno != 26: raise
                 if scenario == "slow-auth": time.sleep(0.25)
                 if scenario in ("cancel", "handoff-cancel"):
                     os.write(terminal, b"DUMMY_NATIVE_AUTH_PASSWORD")
@@ -138,7 +157,7 @@ os.execv(args[0], args)
                 os.write(terminal, b"DUMMY_NATIVE_AUTH_PASSWORD\r")
                 retried = True
             if scenario == "command-interrupt" and not command_interrupted and (temporary / "command-started").exists():
-                os.write(terminal, b"DUMMY_NATIVE_AUTH_TAIL\x03")
+                os.write(terminal, b"DUMMY_COMMAND_INPUT\x03")
                 command_interrupted = True
             if phase < 4 and (temporary / "cleanup").exists():
                 assert b"APP_RESUMED" not in transcript
@@ -148,7 +167,7 @@ os.execv(args[0], args)
                 os.write(terminal, tail)
                 # A PTY master write can still be in transit. Test flushing queued
                 # input, not input that arrives after the native cleanup barrier.
-                slave = os.open(f"/proc/{pid}/fd/0", os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                slave = os.open(slave_path, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
                 try:
                     while struct.unpack("I", fcntl.ioctl(slave, termios.FIONREAD, struct.pack("I", 0)))[0] < len(tail):
                         assert time.monotonic() < deadline, "trailing input did not reach the terminal"
@@ -178,13 +197,17 @@ os.execv(args[0], args)
         output = (temporary / "result.json").read_bytes()
         log = (temporary / "stdin.log").read_bytes()
         assert (b"\r" if scenario == "loaded" else b"r") in log, "raw-input logging was not exercised"
-        for secret in (b"DUMMY_NATIVE_AUTH_PASSWORD", b"DUMMY_NATIVE_AUTH_TAIL", b"DUMMY_NATIVE_AUTH_BUFFER", b"second-line"):
+        for secret in (b"DUMMY_NATIVE_AUTH_PASSWORD", b"DUMMY_NATIVE_AUTH_TAIL", b"DUMMY_NATIVE_AUTH_BUFFER", b"DUMMY_COMMAND_INPUT", b"second-line"):
             assert secret not in output, "secret leaked into tool result"
             assert secret not in log, f"{secret!r} leaked into renderer input log: {log!r}"
         if released: assert b"z" in log, "fresh input was not delivered after resume"
         assert b"DUMMY_NATIVE_AUTH_TAIL" not in transcript, "cleanup echoed trailing input"
+        # The fake deliberately writes PAM text containing the password; the tty
+        # must contain only those writes, never a third copy from input echo.
+        expected_password_writes = 3 if scenario == "retry" else 2 if b"AUTH_STDOUT:" in transcript else 0
+        assert transcript.count(b"DUMMY_NATIVE_AUTH_PASSWORD") == expected_password_writes, "password input echoed"
         result = json.loads(output)
-        if scenario in ("success", "loaded", "nopasswd", "diagnostics", "suspend", "attributes", "readback", "ownership", "foreground-readback", "slow-auth", "long-auth", "replace", "unlink", "resize", "escape-tail", "retry"):
+        if scenario in ("success", "loaded", "nopasswd", "diagnostics", "suspend", "attributes", "readback", "ownership", "foreground-readback", "slow-auth", "long-auth", "replace", "unlink", "overwrite", "resize", "escape-tail", "retry"):
             assert result["output"] == "command-output\n", result
             assert result["exit"] == 0, result
             assert not result["timedOut"], result
@@ -201,6 +224,12 @@ os.execv(args[0], args)
         if scenario == "success":
             assert b"AUTH_STDOUT:DUMMY_NATIVE_AUTH_PASSWORD" in transcript
             assert b"AUTH_STDERR:DUMMY_NATIVE_AUTH_PASSWORD" in transcript
+        # Darwin can report PTY EOF before the fixture process is waitable.
+        while status is None and time.monotonic() < deadline:
+            ended, code = os.waitpid(pid, os.WNOHANG)
+            if ended: status = code
+            else: time.sleep(.001)
+        assert status == 0, f"fixture exit: {status}"
         print(json.dumps({"scenario": scenario, "released": released, "credential_leaks": False}))
     finally:
         if status is None:

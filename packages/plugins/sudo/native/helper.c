@@ -1,4 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#include <mach-o/dyld.h>
+#include <limits.h>
+#endif
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -133,7 +138,13 @@ static int supervise(const char *socket_path, const char *id) {
   int timed_out = 0;
   int status = 0;
   pid_t child = -1;
+#ifdef __APPLE__
+  // Preemptively disabling echo prevents the system Touch ID dialog from focusing.
+  // Preserve the caller's settings; sudo/PAM owns echo while it authenticates.
+  if (tcflush(tty, TCIFLUSH)) goto cleanup;
+#else
   if (tcsetattr(tty, TCSAFLUSH, &guarded)) goto cleanup;
+#endif
   screen_begin(tty, &screen);
   struct sockaddr_un address = { .sun_family = AF_UNIX };
   if (strlen(socket_path) >= sizeof(address.sun_path) || strlen(id) != 36) goto cleanup;
@@ -163,13 +174,22 @@ static int supervise(const char *socket_path, const char *id) {
   if (mkfifo(fifo, 0600) || (output = open(fifo, O_RDWR | O_NONBLOCK | O_CLOEXEC)) < 0) goto cleanup;
 
   if (interrupted) goto cleanup;
+#ifndef __APPLE__
   struct termios authentication = original;
   authentication.c_lflag &= (tcflag_t)~(ECHO | ECHONL);
   if (tcsetattr(tty, TCSAFLUSH, &authentication)) goto cleanup;
+#endif
   dprintf(tty, "System sudo · Ctrl+C cancels.\r\n");
   // Keep sudo's post-authentication entry bound to this running image, even during a package update.
+#ifdef __APPLE__
+  // The TUI launches a verified private copy retained for this invocation.
+  char executable[PATH_MAX];
+  uint32_t executable_size = sizeof(executable);
+  if (_NSGetExecutablePath(executable, &executable_size)) goto cleanup;
+#else
   char executable[64];
   snprintf(executable, sizeof(executable), "/proc/%ld/exe", (long)getpid());
+#endif
   child = fork();
   if (child < 0) goto cleanup;
   if (!child) {
@@ -240,6 +260,10 @@ cleanup:
   sigaddset(&blocked, SIGWINCH);
   if (sigprocmask(SIG_BLOCK, &blocked, NULL)) return 125;
   interrupted = 0;
+#ifdef __APPLE__
+  // Sudo may have restored echo. Guard cleanup only after it has stopped reading.
+  if (tcsetattr(tty, TCSAFLUSH, &guarded)) return 125;
+#endif
   if (output >= 0) close(output);
   if (fifo[0]) unlink(fifo);
   if (strstr(directory, "XXXXXX") == NULL) rmdir(directory);

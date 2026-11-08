@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Add macOS arm64 native sudo support, including system-configured Touch ID and password fallback.
+- Let macOS sudo manage password echo so Touch ID can receive focus automatically.
+- Preserve the macOS helper across package updates using a private verified executable copy.
+- Bundle Linux x64 and macOS arm64 helpers in one archive, verified on both platforms before publication.
+- Retain the existing experimental plugin identity, tool API, and credential-isolation boundary.
+
 ## 0.1.0
 
 Initial release for OpenCode v2 on Linux x64.

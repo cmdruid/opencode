@@ -604,7 +604,7 @@
     },
     "packages/plugins/sudo": {
       "name": "@cmdcode/opencode-safe-sudo",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@opencode/core": "workspace:*",
         "@opencode/theme": "workspace:*",

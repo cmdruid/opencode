@@ -3,9 +3,9 @@ import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
 
 // Release-time compilation only. Plugin installation never runs a compiler or sudo.
-if (process.platform !== "linux" || process.arch !== "x64")
-  throw new Error("The initial sudo plugin release supports Linux x64. Build releases on that platform.")
-const directory = fileURLToPath(new URL("../native/bin/linux-x64/", import.meta.url))
+if (!(process.platform === "linux" && process.arch === "x64") && !(process.platform === "darwin" && process.arch === "arm64"))
+  throw new Error("Build native helpers on Linux x64 or macOS arm64.")
+const directory = fileURLToPath(new URL(`../native/bin/${process.platform}-${process.arch}/`, import.meta.url))
 await mkdir(directory, { recursive: true })
 const binary = `${directory}/opencode-sudo-tty`
 const child = Bun.spawn(
@@ -16,7 +16,7 @@ const child = Bun.spawn(
     "-Wextra",
     "-Werror",
     "-O2",
-    "-static",
+    ...(process.platform === "linux" ? ["-static"] : ["-mmacosx-version-min=15.0"]),
     fileURLToPath(new URL("../native/helper.c", import.meta.url)),
     "-o",
     binary,
@@ -25,6 +25,13 @@ const child = Bun.spawn(
 )
 if (await child.exited) throw new Error("Native helper build failed")
 await chmod(binary, 0o755)
+if (process.platform === "darwin") {
+  const signature = Bun.spawn(["/usr/bin/codesign", "--verify", "--strict", binary], {
+    stdout: "inherit",
+    stderr: "inherit",
+  })
+  if (await signature.exited) throw new Error("Native helper signature verification failed")
+}
 await Bun.write(
   `${binary}.sha256`,
   createHash("sha256")

@@ -1,6 +1,6 @@
 {
   "name": "@cmdcode/opencode-safe-sudo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sudo for OpenCode with native password isolation and a compact terminal UI",
   "type": "module",
   "exports": {
@@ -14,7 +14,7 @@
     "typecheck:tsc": "tsc --noEmit",
     "test": "bun run build && bun test --timeout 30000",
     "build:native": "bun script/build-native.ts",
-    "prepack": "bun run build",
+    "prepack": "bun script/prepare-package.ts && bun script/build-tui.ts",
     "build": "bun run build:native && bun script/build-tui.ts",
     "verify:archive": "bun script/verify-archive.ts"
   },
@@ -44,6 +44,8 @@
     "native.ts",
     "native/bin/linux-x64/opencode-sudo-tty",
     "native/bin/linux-x64/opencode-sudo-tty.sha256",
+    "native/bin/darwin-arm64/opencode-sudo-tty",
+    "native/bin/darwin-arm64/opencode-sudo-tty.sha256",
     "native/helper.c",
     "native/screen.h",
     "native/README.md",
@@ -54,10 +56,12 @@
     "CHANGELOG.md"
   ],
   "os": [
-    "linux"
+    "linux",
+    "darwin"
   ],
   "cpu": [
-    "x64"
+    "x64",
+    "arm64"
   ],
   "license": "MIT",
   "repository": {

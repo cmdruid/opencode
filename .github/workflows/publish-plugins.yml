@@ -1,6 +1,14 @@
 name: Publish cmdcode plugins
 
 on:
+  pull_request:
+    branches:
+      - custom
+    paths:
+      - "packages/plugins/sudo/**"
+      - ".github/workflows/publish-plugins.yml"
+      - "package.json"
+      - "bun.lock"
   push:
     branches:
       - custom
@@ -22,7 +30,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native:
+    if: github.repository == 'cmdruid/opencode'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          - runner: macos-15
+            platform: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "26"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Build native platform helper
+        working-directory: packages/plugins/sudo
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          bun -e 'if ((process.platform + "-" + process.arch) !== process.env.PLATFORM) throw new Error("Wrong native runner architecture")'
+          bun run build:native
+          tar -cf "$RUNNER_TEMP/native-$PLATFORM.tar" "native/bin/$PLATFORM"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-${{ matrix.platform }}
+          path: ${{ runner.temp }}/native-${{ matrix.platform }}.tar
+          if-no-files-found: error
+          retention-days: 14
+
   build:
+    needs: native
     if: github.repository == 'cmdruid/opencode'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -48,19 +96,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor HEAD origin/custom
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git merge-base --is-ancestor origin/custom HEAD
+          else
+            git merge-base --is-ancestor HEAD origin/custom
+          fi
           bun -e '
             import { valid } from "semver"
             const pkg = await Bun.file("packages/plugins/sudo/package.json").json()
             if (pkg.name !== "@cmdcode/opencode-safe-sudo" || !valid(pkg.version)) throw new Error("Invalid release package")
-            if (process.env.GITHUB_REF?.startsWith("refs/tags/") && process.env.GITHUB_REF !== `refs/tags/opencode-safe-sudo-v${pkg.version}`) throw new Error("Tag must match package version")
+            if (process.env.GITHUB_REF?.startsWith("refs/tags/") && process.env.GITHUB_REF !== ("refs/tags/opencode-safe-sudo-v" + pkg.version)) throw new Error("Tag must match package version")
             if (process.env.GITHUB_EVENT_NAME === "workflow_dispatch" && process.env.GITHUB_REF !== "refs/heads/custom") throw new Error("Select custom for a manual build")
-            await Bun.write(process.env.GITHUB_OUTPUT, `dist_tag=${pkg.version.includes("-") ? "next" : "latest"}\n`)
+            await Bun.write(process.env.GITHUB_OUTPUT, "dist_tag=" + (pkg.version.includes("-") ? "next" : "latest") + "\n")
           '
       - name: Check repository and plugin types
         run: |
           bun run check
           bun run --cwd packages/plugins/sudo typecheck:tsc
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: native-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/native-helpers
+      - name: Assemble both native builds
+        working-directory: packages/plugins/sudo
+        run: |
+          tar -xf "$RUNNER_TEMP/native-helpers/native-linux-x64.tar"
+          tar -xf "$RUNNER_TEMP/native-helpers/native-darwin-arm64.tar"
       - name: Build release archive
         id: pack
         working-directory: packages/plugins/sudo
@@ -72,15 +134,6 @@ jobs:
           archive="cmdcode-opencode-safe-sudo-$(node -p 'require("./package.json").version').tgz"
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "sha256=$(sha256sum "$RUNNER_TEMP/plugin-release/$archive" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
-      - name: Test the exact release archive
-        working-directory: packages/plugins/sudo
-        env:
-          OPENCODE_SUDO_TARBALL: ${{ runner.temp }}/plugin-release/${{ steps.pack.outputs.archive }}
-        run: bun run verify:archive "$OPENCODE_SUDO_TARBALL"
-      - name: Install and load outside the workspace
-        env:
-          ARCHIVE: ${{ steps.pack.outputs.archive }}
-        run: bun packages/plugins/sudo/script/smoke-install.ts "$RUNNER_TEMP/plugin-release/$ARCHIVE"
       - name: Check npm publication contents without publishing
         env:
           ARCHIVE: ${{ steps.pack.outputs.archive }}
@@ -92,8 +145,68 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish:
+  verify:
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          - runner: macos-15
+            platform: darwin-arm64
+          - runner: macos-26
+            platform: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "26"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cmdcode-plugin-release
+          path: ${{ runner.temp }}/plugin-release
+      - name: Test the exact release archive
+        working-directory: packages/plugins/sudo
+        env:
+          ARCHIVE: ${{ needs.build.outputs.archive }}
+          EXPECTED_SHA256: ${{ needs.build.outputs.sha256 }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          bun -e 'if ((process.platform + "-" + process.arch) !== process.env.PLATFORM) throw new Error("Wrong native runner architecture")'
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$RUNNER_TEMP/plugin-release/$ARCHIVE" | shasum -a 256 --check
+          bun run build
+          bun run verify:archive "$RUNNER_TEMP/plugin-release/$ARCHIVE"
+      - name: Install and load outside the workspace
+        env:
+          ARCHIVE: ${{ needs.build.outputs.archive }}
+        run: bun packages/plugins/sudo/script/smoke-install.ts "$RUNNER_TEMP/plugin-release/$ARCHIVE"
+      - name: Check the human runner using fake sudo
+        working-directory: packages/plugins/sudo
+        run: |
+          bun run build
+          for scenario in success slow cancel review-cancel; do
+            python3 test/fixture/manual.py "$scenario"
+          done
+      - name: Check Linux tmux terminal restoration
+        if: runner.os == 'Linux'
+        working-directory: packages/plugins/sudo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux
+          python3 test/fixture/overlay.py
+
+  publish:
+    needs: [build, verify]
     if: github.repository == 'cmdruid/opencode' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/opencode-safe-sudo-v')
     runs-on: ubuntu-24.04
     timeout-minutes: 5

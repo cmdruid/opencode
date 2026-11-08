@@ -6,8 +6,12 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { requireBundledHelper } from "../native"
 import manifest from "../package.json"
+import { verifyHelpers } from "../script/prepare-package"
 
-test.skipIf(process.platform !== "linux" || process.arch !== "x64")(
+test.skipIf(
+  !(process.platform === "linux" && process.arch === "x64") &&
+    !(process.platform === "darwin" && process.arch === "arm64"),
+)(
   "packed plugin includes a working native helper without installation hooks or workspace runtime dependencies",
   async () => {
     const directory = await mkdtemp(join(tmpdir(), "sudo-package-"))
@@ -15,7 +19,7 @@ test.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       const archive =
         process.env.OPENCODE_SUDO_TARBALL ?? join(directory, `cmdcode-opencode-safe-sudo-${manifest.version}.tgz`)
       if (!process.env.OPENCODE_SUDO_TARBALL) {
-        const build = Bun.spawn(["bun", "run", "build"], {
+        const build = Bun.spawn(["bun", "run", "prepack"], {
           cwd: join(import.meta.dir, ".."),
           stdout: "ignore",
           stderr: "pipe",
@@ -48,6 +52,7 @@ test.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       expect(entries.server).toContain("index.ts")
       expect(entries.tui).toContain("tui.js")
       expect(await Bun.file(join(root, "native/screen.h")).exists()).toBe(true)
+      await verifyHelpers(join(root, "native/bin"))
       // A fresh consumer process avoids the test runner's host-module interception/cache.
       const tui = Bun.spawn(
         [
@@ -81,6 +86,9 @@ test.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       // A damaged or mixed-version bundle must fail before taking the user's terminal.
       await writeFile(`${helper}.sha256`, "0".repeat(64))
       await expect(requireBundledHelper(pathToFileURL(`${root}/native/bin/`))).rejects.toThrow("integrity check failed")
+      await expect(verifyHelpers(join(root, "native/bin"))).rejects.toThrow("integrity check failed")
+      await rm(join(root, "native/bin/linux-x64/opencode-sudo-tty"))
+      await expect(verifyHelpers(join(root, "native/bin"))).rejects.toThrow()
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

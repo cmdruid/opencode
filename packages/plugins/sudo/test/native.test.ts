@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 
 // These tests require real Unix job control, Python's pty module, and a C compiler. They never use real sudo.
 test
-  .skipIf(process.platform !== "linux")
+  .skipIf(!["linux", "darwin"].includes(process.platform))
   .each([
     "success",
     "nopasswd",
@@ -28,6 +28,7 @@ test
     "remote",
     "replace",
     "unlink",
+    "overwrite",
     "resize",
     "escape-tail",
   ])("native password boundary: %s", async (scenario) => {

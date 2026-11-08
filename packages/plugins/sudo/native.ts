@@ -1,7 +1,7 @@
 import type { CliRenderer } from "@opentui/core"
 import type { Plugin } from "@opencode/plugin/tui"
 import { spawn } from "node:child_process"
-import { chmod, lstat } from "node:fs/promises"
+import { chmod, lstat, mkdtemp, rm } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
 import type { Request } from "./rpc"
@@ -20,9 +20,12 @@ export async function authenticate(
 }
 
 export async function requireBundledHelper(directory = new URL("./native/bin/", import.meta.url)) {
-  if (process.platform !== "linux" || process.arch !== "x64")
-    throw new Error("This sudo plugin release supports Linux x64 terminals.")
-  const helper = fileURLToPath(new URL("linux-x64/opencode-sudo-tty", directory))
+  if (
+    !(process.platform === "linux" && process.arch === "x64") &&
+    !(process.platform === "darwin" && process.arch === "arm64")
+  )
+    throw new Error("This sudo plugin supports Linux x64 and macOS arm64 terminals.")
+  const helper = fileURLToPath(new URL(`${process.platform}-${process.arch}/opencode-sudo-tty`, directory))
   const info = await lstat(helper)
   if (!info.isFile() || (info.mode & 0o6002) !== 0 || (info.mode & 0o111) === 0)
     throw new Error("Invalid bundled sudo helper. Reinstall the plugin.")
@@ -142,6 +145,8 @@ export async function takeTerminal(
     throw new Error("Terminal is already in use")
   const screen = await preparePresentation(renderer, theme, signal)
   signal?.throwIfAborted()
+  await using image = process.platform === "darwin" ? await stageHelper(executable) : undefined
+  signal?.throwIfAborted()
   await renderer.suspend()
   if (signal?.aborted) {
     // No native process or password prompt exists yet, so this handoff can be unwound.
@@ -149,7 +154,7 @@ export async function takeTerminal(
     return true
   }
   const released = await new Promise<boolean>((resolve) => {
-    const child = spawn(executable, args, {
+    const child = spawn(image?.path ?? executable, args, {
       stdio: ["inherit", "inherit", "inherit", "pipe"],
       env: { PATH: "/usr/bin:/bin", LANG: "C", TERM: "dumb" },
     })
@@ -180,4 +185,22 @@ export async function takeTerminal(
   while (renderer.stdin.read() !== null) {}
   await renderer.resume()
   return true
+}
+
+/** Keep macOS post-authentication execution independent of package replacement. */
+export async function stageHelper(executable: string) {
+  const bytes = new Uint8Array(await Bun.file(executable).arrayBuffer())
+  const expected = (await Bun.file(`${executable}.sha256`).text()).trim()
+  if (!/^[a-f0-9]{64}$/.test(expected) || createHash("sha256").update(bytes).digest("hex") !== expected)
+    throw new Error("Bundled sudo helper integrity check failed before staging.")
+  const directory = await mkdtemp("/tmp/opencode-sudo-image-")
+  const path = `${directory}/helper`
+  try {
+    await Bun.write(path, bytes)
+    await chmod(path, 0o500)
+    return { path, [Symbol.asyncDispose]: () => rm(directory, { recursive: true, force: true }) }
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true })
+    throw error
+  }
 }

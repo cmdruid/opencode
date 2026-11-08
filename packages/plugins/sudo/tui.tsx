@@ -106,7 +106,7 @@ export default Plugin.define({
                 () => {
                   void rpc.cancel({ id: request.id }, options).catch(() => undefined)
                   setError(
-                    "Cannot open native sudo. Use a local Linux x64 terminal and reinstall the plugin if its bundled helper is missing.",
+                    "Cannot open native sudo. Use a Linux x64 or macOS arm64 terminal on the server host and reinstall the plugin if its bundled helper is missing.",
                   )
                 },
               )
