@@ -7,10 +7,14 @@
 int __real_clock_gettime(clockid_t clock, struct timespec *value);
 int __real_poll(struct pollfd *fds, nfds_t count, int timeout);
 
-// Advance only this test helper's monotonic clock while fake sudo is awaiting input.
+// Freeze this helper's clock, then advance it while fake sudo awaits input.
+// Command startup speed must not consume this test's short execution allowance.
 int __wrap_clock_gettime(clockid_t clock, struct timespec *value) {
   int result = __real_clock_gettime(clock, value);
-  if (!result && clock == CLOCK_MONOTONIC && !access(TEST_CLOCK_PATH, F_OK)) value->tv_sec += 600;
+  if (!result && clock == CLOCK_MONOTONIC) {
+    value->tv_sec = 1000 + (!access(TEST_CLOCK_PATH, F_OK) ? TEST_AUTH_SECONDS : 0);
+    value->tv_nsec = 0;
+  }
   return result;
 }
 

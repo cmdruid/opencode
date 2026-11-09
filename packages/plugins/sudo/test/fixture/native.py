@@ -61,18 +61,21 @@ os.execv(args[0], args)
         "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O2", "-DOPENCODE_SUDO_TEST",
         f'-DSUDO_PATH="{fake}"', f'-DTEST_CLEANUP_PATH="{temporary}/cleanup"',
         f'-DTEST_FAILURE="{scenario}"',
-        *([f'-DTEST_CLOCK_PATH="{temporary}/clock"'] if scenario == "long-auth" else []),
+        *([f'-DTEST_CLOCK_PATH="{temporary}/clock"', f'-DTEST_AUTH_SECONDS={1 if scenario == "slow-auth" else 600}']
+          if scenario in ("slow-auth", "long-auth") else []),
     ]
     wrappers = ["tcsetattr", "tcgetattr", "tcsetpgrp", "tcgetpgrp"]
-    if scenario == "long-auth": wrappers += ["clock_gettime", "poll"]
+    if scenario in ("slow-auth", "long-auth"): wrappers += ["clock_gettime", "poll"]
+    renamed = wrappers if sys.platform == "darwin" else []
     source = pathlib.Path(os.environ.get("SUDO_NATIVE_SOURCE", str(package / "native"))) / "helper.c"
-    # Rename only the helper's references; wrapper definitions call the real libc symbols.
-    # This also works with Apple's linker, which has no GNU --wrap option.
-    subprocess.run([*flags, *[f"-D{name}=__wrap_{name}" for name in wrappers], "-c",
+    # Apple's linker needs source renaming. On Linux use linker wrapping:
+    # fortified libc headers can redirect a renamed poll back to the real symbol.
+    subprocess.run([*flags, *[f"-D{name}=__wrap_{name}" for name in renamed], "-c",
                     str(source), "-o", str(temporary / "helper.o")], check=True)
-    subprocess.run([*flags, *[f"-D__real_{name}={name}" for name in wrappers],
+    subprocess.run([*flags, *[f"-D__real_{name}={name}" for name in renamed],
+                    *([f"-Wl,--wrap={name}" for name in wrappers] if sys.platform == "linux" else []),
                     str(temporary / "helper.o"), str(package / "test/fixture/cleanup.c"),
-                    *([str(package / "test/fixture/clock.c")] if scenario == "long-auth" else []),
+                    *([str(package / "test/fixture/clock.c")] if scenario in ("slow-auth", "long-auth") else []),
                     "-o", str(helper)], check=True)
     pathlib.Path(str(helper) + ".sha256").write_text(hashlib.sha256(helper.read_bytes()).hexdigest())
     if scenario == "loaded":
@@ -126,7 +129,7 @@ os.execv(args[0], args)
                     os.killpg(native_group, signal.SIGKILL)
                     phase = 4
                     continue
-                if scenario == "long-auth":
+                if scenario in ("slow-auth", "long-auth"):
                     (temporary / "clock").touch()
                     if not (temporary / "clock.observed").exists(): continue
                 if scenario == "resize":
@@ -144,7 +147,6 @@ os.execv(args[0], args)
                     except OSError as error:
                         # Linux pins the running file and rejects writes with ETXTBSY.
                         if sys.platform != "linux" or error.errno != 26: raise
-                if scenario == "slow-auth": time.sleep(0.25)
                 if scenario in ("cancel", "handoff-cancel"):
                     os.write(terminal, b"DUMMY_NATIVE_AUTH_PASSWORD")
                     (temporary / "cancel").touch()
